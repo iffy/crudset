@@ -263,5 +263,35 @@ class CrudTest(TestCase):
                          "records matching the fixed values")
 
 
+    @defer.inlineCallbacks
+    def test_fetch_expression(self):
+        """
+        You can limit even further.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families))
+
+        for i in xrange(10):
+            yield crud.create({'surname': 'Family %d' % (i,)})
+
+        family4 = yield crud.fetch(families.c.surname == 'Family 4')
+        self.assertEqual(len(family4), 1)
+        self.assertEqual(family4[0]['surname'], 'Family 4')
+
+
+    @defer.inlineCallbacks
+    def test_update(self):
+        """
+        You can update sets.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families))
+        yield crud.create({'surname': 'Jones'})
+        fams = yield crud.update({'surname': 'Jamison'})
+        self.assertEqual(len(fams), 1)
+        self.assertEqual(fams[0]['surname'], 'Jamison')
+
+
+
 
 

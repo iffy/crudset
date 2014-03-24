@@ -40,6 +40,20 @@ class Crud(object):
         self._fixed = {}
 
 
+    def fix(self, attrs):
+        """
+        Fix some attributes to a particular value.
+
+        @param attrs: dict of attributes to fix.
+
+        @return: A new L{Crud}.
+        """
+        crud = Crud(self.engine, self.policy)
+        crud._fixed = self._fixed.copy()
+        crud._fixed.update(attrs)
+        return crud
+
+
     @defer.inlineCallbacks
     def create(self, attrs):
         # check for editability
@@ -64,11 +78,19 @@ class Crud(object):
 
 
     @defer.inlineCallbacks
-    def fetch(self):
+    def fetch(self, where=None):
         """
         Get a set of records.
+
+        @param where: Extra restriction of scope.
         """
-        result = yield self.engine.execute(self._baseQuery())
+        query = self._baseQuery()
+
+        # filter by extra where.
+        if where is not None:
+            query = query.where(where)
+
+        result = yield self.engine.execute(query)
         rows = yield result.fetchall()
         ret = []
         for row in rows:
@@ -76,10 +98,26 @@ class Crud(object):
         defer.returnValue(ret)
 
 
+    @defer.inlineCallbacks
+    def update(self, attrs):
+        """
+        Update a set of records.
+        """
+        up = self.policy.table.update()
+        up = self._applyConstraints(up)
+        up = up.values(**attrs)
+        yield self.engine.execute(up)
+
+        rows = yield self.fetch()
+        defer.returnValue(rows)
+
+
     def _baseQuery(self):
         base = select(self.policy.viewable)
+        return self._applyConstraints(base)
 
-        # restrict by fixed attributes
+
+    def _applyConstraints(self, query):
         if self._fixed:
             where = None
             for k, v in self._fixed.items():
@@ -89,9 +127,8 @@ class Crud(object):
                     where = where and comp
                 else:
                     where = comp
-            base = base.where(where)
-
-        return base
+            query = query.where(where)
+        return query
 
 
     @defer.inlineCallbacks
@@ -115,20 +152,6 @@ class Crud(object):
         for (col, v) in zip(self.policy.viewable, row):
             d[col.name] = v
         return d
-
-
-    def fix(self, attrs):
-        """
-        Fix some attributes to a particular value.
-
-        @param attrs: dict of attributes to fix.
-
-        @return: A new L{Crud}.
-        """
-        crud = Crud(self.engine, self.policy)
-        crud._fixed = self._fixed.copy()
-        crud._fixed.update(attrs)
-        return crud
 
 
 
