@@ -292,6 +292,47 @@ class CrudTest(TestCase):
         self.assertEqual(fams[0]['surname'], 'Jamison')
 
 
+    @defer.inlineCallbacks
+    def test_update_fixed(self):
+        """
+        Fixed attributes are part of the update.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families))
+        yield crud.create({'surname': 'Jones', 'location': 'anvilania'})
+        yield crud.create({'surname': 'James', 'location': 'gotham'})
+
+        crud2 = crud.fix({'surname': 'James'})
+        yield crud2.update({'location': 'middle earth'})
+
+        fams = yield crud.fetch(families.c.surname == u'Jones')
+        self.assertEqual(fams[0]['location'], 'anvilania')
+
+        fams = yield crud.fetch(families.c.surname == u'James')
+        self.assertEqual(fams[0]['location'], 'middle earth')
+
+
+    @defer.inlineCallbacks
+    def test_update_expression(self):
+        """
+        You can filter the update by expression, too.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families))
+        yield crud.create({'surname': 'Jones', 'location': 'anvilania'})
+        yield crud.create({'surname': 'James', 'location': 'gotham'})
+
+        fams = yield crud.update({'location': 'middle earth'},
+                                 families.c.surname == 'James')
+        self.assertEqual(len(fams), 1)
+
+        fams = yield crud.fetch(families.c.surname == u'Jones')
+        self.assertEqual(fams[0]['location'], 'anvilania')
+
+        fams = yield crud.fetch(families.c.surname == u'James')
+        self.assertEqual(fams[0]['location'], 'middle earth')
+
+
 
 
 

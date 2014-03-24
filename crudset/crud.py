@@ -99,16 +99,20 @@ class Crud(object):
 
 
     @defer.inlineCallbacks
-    def update(self, attrs):
+    def update(self, attrs, where=None):
         """
         Update a set of records.
         """
         up = self.policy.table.update()
         up = self._applyConstraints(up)
+
+        if where is not None:
+            up = up.where(where)
+
         up = up.values(**attrs)
         yield self.engine.execute(up)
 
-        rows = yield self.fetch()
+        rows = yield self.fetch(where)
         defer.returnValue(rows)
 
 
