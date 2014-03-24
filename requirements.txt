@@ -1,2 +1,2 @@
 SQLAlchemy==0.8.3
-alchimia==0.4
+-e git://github.com/alex/alchimia@c854181b963e4db6d71b5029f6f4cc67d93306e5#egg=alchimia-0.4
