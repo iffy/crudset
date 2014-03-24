@@ -333,6 +333,30 @@ class CrudTest(TestCase):
         self.assertEqual(fams[0]['location'], 'middle earth')
 
 
+    @defer.inlineCallbacks
+    def test_update_notEditable(self):
+        """
+        Only editable fields are editable.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families, editable=['surname']))
+
+        exc = self.failureResultOf(crud.update({'location':'foo'})).value
+        self.assertTrue(isinstance(exc, NotEditable))
+
+
+    @defer.inlineCallbacks
+    def test_update_notEditable_fixed(self):
+        """
+        If you try to update an attribute that is fixed and not editable,
+        it shouldn't be editable.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families, editable=['surname']))
+        crud = crud.fix({'location': '10'})
+
+        exc = self.failureResultOf(crud.update({'location':'foo'})).value
+        self.assertTrue(isinstance(exc, NotEditable))
 
 
 

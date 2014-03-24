@@ -103,6 +103,11 @@ class Crud(object):
         """
         Update a set of records.
         """
+        # check for editability
+        forbidden = set(attrs) - self.policy.editable
+        if forbidden:
+            raise NotEditable(', '.join(forbidden))
+
         up = self.policy.table.update()
         up = self._applyConstraints(up)
 
