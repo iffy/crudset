@@ -11,19 +11,37 @@ class Policy(object):
     XXX
     """
 
-    def __init__(self, table, required=None, editable=None):
+    def __init__(self, table, required=None, writeable=None, readable=None):
         """
         @param required: List of required field names.
-        @param editable: List of editable fields.  If C{None} then no fields
-            are editable.
+        @param writeable: List of writeable fields.  If C{None} then all
+            readable fields are writeable.
+        @param readable: List of readable fields.  If C{None} then all
+            writeable fields are readable.
         """
         self.table = table
-        self.viewable = list(table.columns)
         self.required = frozenset(required or [])
-        if editable is None:
-            self.editable = frozenset([x.name for x in table.columns])
+        
+        # readable
+        if readable is None:
+            self.readable_columns = list(table.columns)
         else:
-            self.editable = frozenset(editable)
+            self.readable_columns = [getattr(table.c, x) for x in readable]
+        self.readable = frozenset([x.name for x in self.readable_columns])
+
+        # writeable
+        if writeable is None:
+            self.writeable = self.readable
+        else:
+            self.writeable = frozenset(writeable)
+        self.writeable_columns = [getattr(table.c, x) for x in self.writeable]
+
+        if self.writeable > self.readable:
+            raise ValueError('writeable columns must be a subset of readable '
+                             'columns: writeable: %r, readable: %r' % (
+                             self.writeable, self.readable))
+
+
 
 
 class Crud(object):
@@ -57,7 +75,7 @@ class Crud(object):
     @defer.inlineCallbacks
     def create(self, attrs):
         # check for editability
-        forbidden = set(attrs) - self.policy.editable
+        forbidden = set(attrs) - self.policy.writeable
         if forbidden:
             raise NotEditable(', '.join(forbidden))
 
@@ -104,7 +122,7 @@ class Crud(object):
         Update a set of records.
         """
         # check for editability
-        forbidden = set(attrs) - self.policy.editable
+        forbidden = set(attrs) - self.policy.writeable
         if forbidden:
             raise NotEditable(', '.join(forbidden))
 
@@ -136,7 +154,7 @@ class Crud(object):
 
 
     def _baseQuery(self):
-        base = select(self.policy.viewable)
+        base = select(self.policy.readable_columns)
         return self._applyConstraints(base)
 
 
@@ -172,63 +190,8 @@ class Crud(object):
 
     def _rowToDict(self, row):
         d = {}
-        for (col, v) in zip(self.policy.viewable, row):
+        for (col, v) in zip(self.policy.readable_columns, row):
             d[col.name] = v
         return d
 
 
-
-class _CrudMaker(object):
-    """
-    I make it easy to create/read/update/delete SQL stuff.
-    XXX Lucy, you have some 'splain to do!
-    """
-
-    def __init__(self, table, create_requires=None, viewable_attributes=None):
-        """
-        @param table: An SQLAlchemy Table.
-
-        @param create_requires: A list of fields that must be provided when
-            creating.
-        @param viewable_attributes: The list of fields to return with read-like
-            operations.
-        """
-        self.table = table
-        self.create_requires = frozenset(create_requires or [])
-
-        self.viewable_attributes = []
-        if viewable_attributes is None:
-            self.viewable_attributes = list(self.table.columns)
-        else:
-            viewable_attributes = viewable_attributes or []
-            for attr in viewable_attributes:
-                self.viewable_attributes.append(getattr(self.table.c, attr))
-
-
-    def create(self, attrs):
-        """
-        Get an insert row statement.
-
-        @param attrs: Dictionary of attributes to set on the rows.
-        """
-        # assert required attributes
-        missing = self.create_requires - set(attrs)
-        if missing:
-            raise MissingRequiredFields(', '.join(missing))
-
-        return self.table.insert().values(**attrs)
-
-
-    def get(self, pk):
-        """
-        Get a row by the primary key.
-        """
-        where = [x == y for (x,y) in zip(self.table.primary_key.columns, pk)]
-        return select(self.viewable_attributes).where(*where)
-
-
-    def fetch(self, where):
-        """
-        Get a select statement.
-        """
-        return select(self.viewable_attributes)

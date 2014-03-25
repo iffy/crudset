@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.schema import CreateTable
 
 from crudset.error import MissingRequiredFields, NotEditable
-from crudset.crud import _CrudMaker, Crud, Policy
+from crudset.crud import Crud, Policy
 
 from twisted.python import log
 import logging
@@ -38,103 +38,6 @@ people = Table('people', metadata,
 )
 
 
-class _CrudMakerFunctionalTest(TestCase):
-    """
-    These tests use an sqlite backend and are therefore functional.
-    """
-
-    def engine(self):
-        engine = create_engine('sqlite://')
-        metadata.create_all(bind=engine)
-        return engine
-
-
-    def assertSame(self, expr1, expr2, msg=''):
-        self.assertEqual(expr1, expr2, '\n%s\n!=\n%s\n%s' % (expr1, expr2, msg))
-
-
-    def test_create(self):
-        """
-        It should return a valid statment for execution.
-        """
-        engine = self.engine()
-        
-        maker = _CrudMaker(families)
-        stmt = maker.create({'surname': 'Johnson'})
-        engine.execute(stmt)
-
-
-    def test_create_required(self):
-        """
-        You can require certain attributes on create.
-        """
-        maker = _CrudMaker(families, create_requires=['surname'])
-        self.assertRaises(MissingRequiredFields, maker.create, {})
-
-
-    def test_get(self):
-        """
-        You can get a single row by primary key
-        """
-        engine = self.engine()
-
-        maker = _CrudMaker(families)
-        engine.execute(maker.create({'surname': 'Jones'}))
-        hogan = engine.execute(maker.create({'surname': 'Hogan'}))
-        key = hogan.inserted_primary_key
-
-        stmt = maker.get(key)
-        result = engine.execute(stmt)
-        rows = list(result)
-        self.assertEqual(rows[0][2], 'Hogan')
-
-
-    def test_fetch(self):
-        """
-        You can fetch rows from the database.
-        """
-        engine = self.engine()
-
-        maker = _CrudMaker(families)
-        stmt = maker.fetch({})
-        result = engine.execute(stmt)
-        rows = list(result)
-        self.assertEqual(rows, [])
-
-
-    def test_fetch_data(self):
-        """
-        You can actually fetch data out.
-        """
-        engine = self.engine()
-
-        maker = _CrudMaker(families)
-        stmt = maker.create({'surname': 'Thomas'})
-        engine.execute(stmt)
-
-        stmt = maker.fetch({})
-        result = engine.execute(stmt)
-        rows = list(result)
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0][2], 'Thomas', 'Actual row: %r' % (rows[0],))
-
-
-    def test_fetch_viewable_attributes(self):
-        """
-        Only viewable attributes should be given
-        """
-        engine = self.engine()
-
-        maker = _CrudMaker(families, viewable_attributes=['surname'])
-        stmt = maker.create({'surname': 'Thomas'})
-        engine.execute(stmt)
-
-        stmt = maker.fetch({})
-        result = engine.execute(stmt)
-        rows = list(result)
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0][0], 'Thomas', 'Actual row: %r' % (rows[0],))
-
 
 class CrudTest(TestCase):
 
@@ -159,7 +62,7 @@ class CrudTest(TestCase):
         You can create an object.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families, editable=['surname']))
+        crud = Crud(engine, Policy(families, writeable=['surname']))
 
         family = yield crud.create({'surname': 'Jones'})
         self.assertEqual(family['surname'], 'Jones')
@@ -173,7 +76,7 @@ class CrudTest(TestCase):
         You can create a Crud with fixed attributes.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families, editable=['surname']))
+        crud = Crud(engine, Policy(families, writeable=['surname']))
         crud = crud.fix({'surname':'Hammond'})
 
         family = yield crud.create({})
@@ -197,10 +100,10 @@ class CrudTest(TestCase):
     @defer.inlineCallbacks
     def test_create_notEditable(self):
         """
-        You can only set editable fields.
+        You can only set writeable fields.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families, editable=[]))
+        crud = Crud(engine, Policy(families, writeable=[]))
 
         exc = self.failureResultOf(crud.create({'surname':'foo'})).value
         self.assertTrue(isinstance(exc, NotEditable))
@@ -209,10 +112,10 @@ class CrudTest(TestCase):
     @defer.inlineCallbacks
     def test_create_notEditable_fixed(self):
         """
-        Fixed fields can be used to update non-editable fields.
+        Fixed fields can be used to update non-writeable fields.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families, editable=[])).fix({'surname':'bo'})
+        crud = Crud(engine, Policy(families, writeable=[])).fix({'surname':'bo'})
 
         family = yield crud.create({})
         self.assertEqual(family['surname'], 'bo')
@@ -224,7 +127,7 @@ class CrudTest(TestCase):
         You can fix attributes one after the other.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families, editable=['location', 'surname']))
+        crud = Crud(engine, Policy(families, writeable=['location', 'surname']))
         crud = crud.fix({'surname': 'Jones'})
         crud = crud.fix({'location': 'Sunnyville'})
 
@@ -236,7 +139,7 @@ class CrudTest(TestCase):
     @defer.inlineCallbacks
     def test_fetch(self):
         """
-        When you fetch, you see the viewable fields, which means every field
+        When you fetch, you see the readable fields, which means every field
         by default.
         """
         engine = yield self.engine()
@@ -277,6 +180,31 @@ class CrudTest(TestCase):
         family4 = yield crud.fetch(families.c.surname == 'Family 4')
         self.assertEqual(len(family4), 1)
         self.assertEqual(family4[0]['surname'], 'Family 4')
+
+
+    @defer.inlineCallbacks
+    def test_fetch_readable(self):
+        """
+        You can limit the set of readable fields.
+        """
+        engine = yield self.engine()
+        crud1 = Crud(engine, Policy(families))
+        yield crud1.create({'surname': 'Johnson', 'location': 'Alabama'})
+        
+        crud2 = Crud(engine, Policy(families, readable=['surname']))
+        fams = yield crud2.fetch()
+        self.assertEqual(fams[0], {'surname': 'Johnson'}, "Should only show "
+                         "the readable fields.")
+
+
+    def test_writeableIsReadableSusbset(self):
+        """
+        The writeable list must be a subset of the readable list.
+        """
+        self.assertRaises(ValueError,
+            Policy, families,
+            writeable=['surname', 'location'],
+            readable=['surname'])
 
 
     @defer.inlineCallbacks
@@ -336,10 +264,10 @@ class CrudTest(TestCase):
     @defer.inlineCallbacks
     def test_update_notEditable(self):
         """
-        Only editable fields are editable.
+        Only writeable fields are writeable.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families, editable=['surname']))
+        crud = Crud(engine, Policy(families, writeable=['surname']))
 
         exc = self.failureResultOf(crud.update({'location':'foo'})).value
         self.assertTrue(isinstance(exc, NotEditable))
@@ -348,11 +276,11 @@ class CrudTest(TestCase):
     @defer.inlineCallbacks
     def test_update_notEditable_fixed(self):
         """
-        If you try to update an attribute that is fixed and not editable,
-        it shouldn't be editable.
+        If you try to update an attribute that is fixed and not writeable,
+        it shouldn't be writeable.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families, editable=['surname']))
+        crud = Crud(engine, Policy(families, writeable=['surname']))
         crud = crud.fix({'location': '10'})
 
         exc = self.failureResultOf(crud.update({'location':'foo'})).value
