@@ -11,17 +11,13 @@ class Policy(object):
     XXX
     """
 
-    def __init__(self, table, required=None, writeable=None, readable=None,
-                 references=None):
+    def __init__(self, table, required=None, writeable=None, readable=None):
         """
         @param required: List of required field names.
         @param writeable: List of writeable fields.  If C{None} then all
             readable fields are writeable.
         @param readable: List of readable fields.  If C{None} then all
             writeable fields are readable.
-
-        @param references: XXX
-        @type references: dict
         """
         self.table = table
         self.required = frozenset(required or [])
@@ -43,18 +39,7 @@ class Policy(object):
         if self.writeable > self.readable:
             raise ValueError('writeable columns must be a subset of readable '
                              'columns: writeable: %r, readable: %r' % (
-                             self.writeable, self.readable))
-
-        self.references = references or {}
-        self._computeSelectColumns()
-
-
-    def _computeSelectColumns(self):
-        self.select_columns = []
-        self.select_columns.extend([(None,x) for x in self.readable_columns])
-        for k, v in self.references.items():
-            self.select_columns.extend([(k,x) for x in v.readable_columns])
-
+                             self.writeable, self.readable))      
 
 
 
@@ -63,13 +48,16 @@ class Crud(object):
     XXX
     """
 
-    def __init__(self, engine, policy):
+    def __init__(self, engine, policy, references=[]):
         """
         XXX
         """
         self.engine = engine
         self.policy = policy
+        self.references = references
         self._fixed = {}
+        self._select_columns = []
+        self._base_query = None
 
 
     def fix(self, attrs):
@@ -116,7 +104,7 @@ class Crud(object):
 
         @param where: Extra restriction of scope.
         """
-        query = self._baseQuery()
+        query = self.base_query
 
         # filter by extra where.
         if where is not None:
@@ -167,15 +155,33 @@ class Crud(object):
         yield self.engine.execute(delete)
 
 
-    def _baseQuery(self):
-        columns = [x[1] for x in self.policy.select_columns]
-        base = select(columns)
-        if self.policy.references:
+    @property
+    def select_columns(self):
+        if self._select_columns is None:
+            self._select_columns, self._base_query = self._generateBaseQueryAndColumns()
+        return self._select_columns
+
+
+    @property
+    def base_query(self):
+        if self._base_query is None:
+            self._select_columns, self._base_query = self._generateBaseQueryAndColumns()
+        return self._base_query
+
+    def _generateBaseQueryAndColumns(self):
+        columns = [(None,x) for x in self.policy.readable_columns]
+        join = None
+        if self.references:
             join = self.policy.table
-            for attr_name, policy in self.policy.references.items():
-                join = join.outerjoin(policy.table)
+            for (attr_name, policy, join_on) in self.references:
+                join = join.outerjoin(policy.table, join_on)
+                columns.extend([(attr_name, x) for x in policy.readable_columns])
+        
+        base = select([x[1] for x in columns])
+        if join is not None:
             base = base.select_from(join)
-        return self._applyConstraints(base)
+        base = self._applyConstraints(base)
+        return columns, base
 
 
     def _applyConstraints(self, query):
@@ -195,7 +201,7 @@ class Crud(object):
     @defer.inlineCallbacks
     def _getOne(self, pk):
         # base query
-        query = self._baseQuery()
+        query = self.base_query
         
         # pk
         table = self.policy.table
@@ -214,7 +220,7 @@ class Crud(object):
         # looping and branching.  Maybe there's a way to have the response
         # tell us clearly whether the record is null or not)
         has_value = {}
-        for ((ref_name,col), v) in zip(self.policy.select_columns, row):
+        for ((ref_name,col), v) in zip(self.select_columns, row):
             if ref_name is None:
                 # base object attribute
                 d[col.name] = v

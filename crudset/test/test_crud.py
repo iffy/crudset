@@ -39,7 +39,7 @@ people = Table('people', metadata,
 
 pets = Table('pets', metadata,
     Column('id', Integer, primary_key=True),
-    Column('name', DateTime),
+    Column('name', String),
     Column('family_id', Integer, ForeignKey('family.id')),
     Column('owner_id', Integer, ForeignKey('people.id')),
 )
@@ -347,9 +347,9 @@ class CrudTest(TestCase):
         if there is no row.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(people, references={
-            'family': Policy(families),
-        }))
+        crud = Crud(engine, Policy(people), references=[
+            ('family', Policy(families), people.c.family_id == families.c.id),
+        ])
 
         yield crud.create({'name': 'Sam'})
         peeps = yield crud.fetch()
@@ -368,11 +368,57 @@ class CrudTest(TestCase):
         fam_crud = Crud(engine, Policy(families))
         family = yield fam_crud.create({'surname': 'Jones'})
 
-        crud = Crud(engine, Policy(people, references={
-            'family': Policy(families),
-        }))
+        crud = Crud(engine, Policy(people), references=[
+            ('family', Policy(families), people.c.family_id == families.c.id),
+        ])
         sam = yield crud.create({'name': 'Sam', 'family_id': family['id']})
         self.assertEqual(sam['family'], family)
+
+
+    @defer.inlineCallbacks
+    def test_references_multiple(self):
+        """
+        You can have multiple references.
+        """
+        engine = yield self.engine()
+        fam_crud = Crud(engine, Policy(families))
+        johnson = yield fam_crud.create({'surname': 'Johnson'})
+
+        person_crud = Crud(engine, Policy(people))
+        john = yield person_crud.create({
+            'family_id': johnson['id'],
+            'name': 'John',
+        })
+
+        pets_crud = Crud(engine, Policy(pets), references=[
+            ('family', Policy(families), pets.c.family_id == families.c.id),
+            ('owner', Policy(people), pets.c.owner_id == people.c.id),
+        ])
+        cat = yield pets_crud.create({
+            'family_id': johnson['id'],
+            'name': 'cat',
+            'owner_id': john['id'],
+        })
+        self.assertEqual(cat['name'], 'cat')
+        self.assertEqual(cat['family'], johnson)
+        self.assertEqual(cat['owner'], john)
+
+        dog = yield pets_crud.create({
+            'name': 'dog',
+            'owner_id': john['id']
+        })
+        self.assertEqual(dog['name'], 'dog')
+        self.assertEqual(dog['owner'], john)
+        self.assertEqual(dog['family'], None)
+
+        fish = yield pets_crud.create({
+            'name': 'bob',
+            'family_id': johnson['id'],
+        })
+        self.assertEqual(fish['name'], 'bob')
+        self.assertEqual(fish['owner'], None)
+        self.assertEqual(fish['family'], johnson)
+
 
 
 
