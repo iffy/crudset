@@ -4,7 +4,7 @@ from twisted.internet import defer, reactor
 from alchimia import TWISTED_STRATEGY
 
 from sqlalchemy import MetaData, Table, Column, Integer, String, DateTime
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, ForeignKey
 from sqlalchemy.schema import CreateTable
 
 from crudset.error import MissingRequiredFields, NotEditable
@@ -25,16 +25,23 @@ logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 
 metadata = MetaData()
 families = Table('family', metadata,
-    Column('id', Integer(), primary_key=True),
-    Column('location', String()),
-    Column('surname', String()),
+    Column('id', Integer, primary_key=True),
+    Column('location', String),
+    Column('surname', String),
 )
 
 people = Table('people', metadata,
-    Column('id', Integer(), primary_key=True),
-    Column('created', DateTime()),
-    Column('family_id', Integer()),
-    Column('name', String()),
+    Column('id', Integer, primary_key=True),
+    Column('created', DateTime),
+    Column('family_id', Integer, ForeignKey('family.id')),
+    Column('name', String),
+)
+
+pets = Table('pets', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', DateTime),
+    Column('family_id', Integer, ForeignKey('family.id')),
+    Column('owner_id', Integer, ForeignKey('people.id')),
 )
 
 
@@ -53,6 +60,7 @@ class CrudTest(TestCase):
                                strategy=TWISTED_STRATEGY)
         yield engine.execute(CreateTable(families))
         yield engine.execute(CreateTable(people))
+        yield engine.execute(CreateTable(pets))
         defer.returnValue(engine)
 
 
@@ -330,6 +338,45 @@ class CrudTest(TestCase):
 
         fams = yield crud.fetch()
         self.assertEqual(len(fams), 1, "Should have deleted Arnold")
+
+
+    @defer.inlineCallbacks
+    def test_references_null(self):
+        """
+        You can nest referenced tables when fetching.  They will be None
+        if there is no row.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(people, references={
+            'family': Policy(families),
+        }))
+
+        yield crud.create({'name': 'Sam'})
+        peeps = yield crud.fetch()
+        self.assertEqual(len(peeps), 1)
+        sam = peeps[0]
+        self.assertEqual(sam['family'], None, str(sam))
+        self.assertEqual(sam['name'], 'Sam')
+
+
+    @defer.inlineCallbacks
+    def test_references_notNull(self):
+        """
+        You can nest objects by reference.
+        """
+        engine = yield self.engine()
+        fam_crud = Crud(engine, Policy(families))
+        family = yield fam_crud.create({'surname': 'Jones'})
+
+        crud = Crud(engine, Policy(people, references={
+            'family': Policy(families),
+        }))
+        sam = yield crud.create({'name': 'Sam', 'family_id': family['id']})
+        self.assertEqual(sam['family'], family)
+
+
+
+
 
 
 

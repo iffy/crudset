@@ -11,13 +11,17 @@ class Policy(object):
     XXX
     """
 
-    def __init__(self, table, required=None, writeable=None, readable=None):
+    def __init__(self, table, required=None, writeable=None, readable=None,
+                 references=None):
         """
         @param required: List of required field names.
         @param writeable: List of writeable fields.  If C{None} then all
             readable fields are writeable.
         @param readable: List of readable fields.  If C{None} then all
             writeable fields are readable.
+
+        @param references: XXX
+        @type references: dict
         """
         self.table = table
         self.required = frozenset(required or [])
@@ -40,6 +44,16 @@ class Policy(object):
             raise ValueError('writeable columns must be a subset of readable '
                              'columns: writeable: %r, readable: %r' % (
                              self.writeable, self.readable))
+
+        self.references = references or {}
+        self._computeSelectColumns()
+
+
+    def _computeSelectColumns(self):
+        self.select_columns = []
+        self.select_columns.extend([(None,x) for x in self.readable_columns])
+        for k, v in self.references.items():
+            self.select_columns.extend([(k,x) for x in v.readable_columns])
 
 
 
@@ -154,7 +168,13 @@ class Crud(object):
 
 
     def _baseQuery(self):
-        base = select(self.policy.readable_columns)
+        columns = [x[1] for x in self.policy.select_columns]
+        base = select(columns)
+        if self.policy.references:
+            join = self.policy.table
+            for attr_name, policy in self.policy.references.items():
+                join = join.outerjoin(policy.table)
+            base = base.select_from(join)
         return self._applyConstraints(base)
 
 
@@ -190,8 +210,29 @@ class Crud(object):
 
     def _rowToDict(self, row):
         d = {}
-        for (col, v) in zip(self.policy.readable_columns, row):
-            d[col.name] = v
+        # XXX the null-reference checking seems less than optimal (lots of
+        # looping and branching.  Maybe there's a way to have the response
+        # tell us clearly whether the record is null or not)
+        has_value = {}
+        for ((ref_name,col), v) in zip(self.policy.select_columns, row):
+            if ref_name is None:
+                # base object attribute
+                d[col.name] = v
+            else:
+                if ref_name not in has_value:
+                    has_value[ref_name] = False
+                # referenced object attribute
+                if ref_name not in d:
+                    d[ref_name] = {}
+                d[ref_name][col.name] = v
+                if v is not None:
+                    has_value[ref_name] = True
+
+        # set Nulls
+        for ref_name, ref_has_value in has_value.items():
+            if not ref_has_value:
+                d[ref_name] = None
+
         return d
 
 
