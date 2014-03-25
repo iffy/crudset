@@ -287,3 +287,9 @@ class Paginator(object):
         return self.crud.fetch(limit=limit, offset=offset, order=self.order)
 
 
+    def pageCount(self):
+        """
+        Return the total number of pages in the set.
+        """
+
+
