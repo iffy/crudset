@@ -359,4 +359,49 @@ class CrudTest(TestCase):
         self.assertTrue(isinstance(exc, NotEditable))
 
 
+    @defer.inlineCallbacks
+    def test_delete(self):
+        """
+        You can delete sets of things.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families))
+        yield crud.create({'surname': 'Jones'})
+        yield crud.delete()
+        fams = yield crud.fetch()
+        self.assertEqual(len(fams), 0)
+
+
+    @defer.inlineCallbacks
+    def test_delete_fixed(self):
+        """
+        The fixed variables influence what is deleted.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families))
+        yield crud.create({'surname': 'Jones'})
+        crud2 = crud.fix({'surname': 'Arnold'})
+        yield crud2.create({})
+        yield crud2.delete()
+
+        fams = yield crud.fetch()
+        self.assertEqual(len(fams), 1, "Should have only deleted the fixed")
+        self.assertEqual(fams[0]['surname'], 'Jones')
+
+
+    @defer.inlineCallbacks
+    def test_delete_expression(self):
+        """
+        You can filter by expression.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families))
+        yield crud.create({'surname': 'Jones'})
+        yield crud.create({'surname': 'Arnold'})
+        yield crud.delete(families.c.surname == 'Arnold')
+
+        fams = yield crud.fetch()
+        self.assertEqual(len(fams), 1, "Should have deleted Arnold")
+
+
 

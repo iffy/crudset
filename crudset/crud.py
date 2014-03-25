@@ -121,6 +121,20 @@ class Crud(object):
         defer.returnValue(rows)
 
 
+    @defer.inlineCallbacks
+    def delete(self, where=None):
+        """
+        Delete a set of records.
+        """
+        delete = self.policy.table.delete()
+        delete = self._applyConstraints(delete)
+
+        if where is not None:
+            delete = delete.where(where)
+
+        yield self.engine.execute(delete)
+
+
     def _baseQuery(self):
         base = select(self.policy.viewable)
         return self._applyConstraints(base)
