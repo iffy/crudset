@@ -8,14 +8,16 @@ from crudset.error import MissingRequiredFields, NotEditable
 
 class Policy(object):
     """
-    XXX
+    I am a read-write policy for a table's attributes.
     """
 
     def __init__(self, table, required=None, writeable=None, readable=None):
         """
         @param required: List of required field names.
+
         @param writeable: List of writeable fields.  If C{None} then all
             readable fields are writeable.
+        
         @param readable: List of readable fields.  If C{None} then all
             writeable fields are readable.
         """
@@ -45,12 +47,22 @@ class Policy(object):
 
 class Crud(object):
     """
-    XXX
+    This turns a L{Policy} into a CRUD.  See my L{create}, L{fetch}, L{count},
+    L{update} and L{delete} methods.
+
+    Also, you can use L{fix} to make new L{Crud} instances with certain
+    attributes fixed (unchangeable by the user).
     """
 
     def __init__(self, engine, policy, references=[]):
         """
-        XXX
+        @param engine: An SQLAlchemy engine; preferrably one made with
+            alchimia's TWISTED_STRATEGY.
+
+        @param policy: A L{Policy} instance.
+
+        @param references: A list of tuples with 3 things:
+            (attr_name, policy, join_on constraint)
         """
         self.engine = engine
         self.policy = policy
