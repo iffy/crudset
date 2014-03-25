@@ -79,6 +79,108 @@ def main(reactor):
     print employees
 
 
-if __name__ == '__main__':
-    task.react(main, [])
+task.react(main, [])
+```
+
+
+## Fixed values ##
+
+You can create child CRUDs with certain attributes fixed.  For example:
+
+<!-- test -->
+
+```python
+from crudset.crud import Crud, Policy
+
+from twisted.internet import defer, task
+
+from sqlalchemy import MetaData, Table, Column, Integer, String, create_engine
+from sqlalchemy.schema import CreateTable
+
+from alchimia import TWISTED_STRATEGY
+
+metadata = MetaData()
+people = Table('people', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('team_id', Integer),
+    Column('name', String),
+)
+
+
+@defer.inlineCallbacks
+def main(reactor):
+    engine = create_engine('sqlite://',
+                           connect_args={'check_same_thread': False},
+                           reactor=reactor,
+                           strategy=TWISTED_STRATEGY)
+    yield engine.execute(CreateTable(people))
+
+    main_crud = Crud(engine, Policy(people))    
+    team3_crud = main_crud.fix({'team_id': 3})
+    team4_crud = main_crud.fix({'team_id': 4})
+
+    john = yield team4_crud.create({'name': 'John'})
+    assert john['team_id'] == 4, john
+
+    members = yield team3_crud.fetch()
+    assert members == [], members
+
+task.react(main, [])
+```
+
+
+## Pagination ##
+
+You can paginate a CRUD.
+
+<!-- test -->
+
+```python
+from crudset.crud import Crud, Policy, Paginator
+
+from twisted.internet import defer, task
+
+from sqlalchemy import MetaData, Table, Column, Integer, String, create_engine
+from sqlalchemy.schema import CreateTable
+
+from alchimia import TWISTED_STRATEGY
+
+metadata = MetaData()
+Books = Table('books', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('title', String),
+)
+
+@defer.inlineCallbacks
+def main(reactor):
+    import tempfile
+    fh, name = tempfile.mkstemp()
+    engine = create_engine('sqlite:///' + name,
+                           connect_args={'check_same_thread': False},
+                           reactor=reactor,
+                           strategy=TWISTED_STRATEGY)
+    yield engine.execute(CreateTable(Books))
+    
+    crud = Crud(engine, Policy(Books))
+
+    for i in xrange(432):
+        yield crud.create({'title': 'Book %s' % (i,)})
+    
+    pager = Paginator(crud, page_size=13)
+    
+    count = yield pager.pageCount()
+    assert count == 34, count
+
+    page3 = yield pager.page(2)
+    assert len(page3) == 13, page3
+    print page3
+
+    # you can filter, too
+    count = yield pager.pageCount(Books.c.title.like('% 1'))
+    print count
+
+    page1 = yield pager.page(0, Books.c.title.like('% 1'))
+    print page1
+
+task.react(main, [])
 ```

@@ -7,5 +7,5 @@ install:
     - pip install -r test-requirements.txt
 
 script:
-    - trial crudset test_readme
+    - trial crudset test_readme && pyflakes _trial_temp
     - pyflakes crudset
