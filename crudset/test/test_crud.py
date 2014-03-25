@@ -250,6 +250,49 @@ class CrudTest(TestCase):
         self.assertEqual(results, fams[2:2+5])
 
 
+    @defer.inlineCallbacks
+    def test_count(self):
+        """
+        You can count the records.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families))
+        for i in xrange(14):
+            yield crud.create({'surname': str(i)})
+
+        count = yield crud.count()
+        self.assertEqual(count, 14)
+
+
+    @defer.inlineCallbacks
+    def test_count_where(self):
+        """
+        You can count filtered records.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families))
+        for i in xrange(14):
+            yield crud.create({'surname': str(i)})
+
+        count = yield crud.count(families.c.surname == '12')
+        self.assertEqual(count, 1)
+
+
+    @defer.inlineCallbacks
+    def test_count_fixed(self):
+        """
+        The count is restricted by fixed attributes.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families))
+        yield crud.create({'surname': 'Jones'})
+        yield crud.create({'surname': 'Arnold'})
+
+        crud2 = crud.fix({'surname': 'Arnold'})
+        count = yield crud2.count()
+        self.assertEqual(count, 1)
+
+
     def test_writeableIsReadableSusbset(self):
         """
         The writeable list must be a subset of the readable list.
@@ -502,6 +545,25 @@ class PaginatorTest(TestCase):
         self.assertEqual(page1, monkeys[:10])
         page2 = yield pager.page(1)
         self.assertEqual(page2, monkeys[10:20])
+
+
+    @defer.inlineCallbacks
+    def test_pageCount(self):
+        """
+        You can count the pages
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(pets))
+        pager = Paginator(crud, page_size=10, order=pets.c.id)
+
+        monkeys = []
+        for i in xrange(43):
+            monkey = yield crud.create({'name': 'seamonkey %d' % (i,)})
+            monkeys.append(monkey)
+
+        pages = yield pager.pageCount()
+        self.assertEqual(pages, 5)
+
 
 
 

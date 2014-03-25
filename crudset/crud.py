@@ -127,6 +127,21 @@ class Crud(object):
 
 
     @defer.inlineCallbacks
+    def count(self, where=None):
+        """
+        Count a set of records.
+        """
+        query = self.base_query
+
+        if where is not None:
+            query = query.where(where)
+
+        result = yield self.engine.execute(query.count())
+        rows = yield result.fetchone()
+        defer.returnValue(rows[0])
+
+
+    @defer.inlineCallbacks
     def update(self, attrs, where=None):
         """
         Update a set of records.
@@ -261,7 +276,14 @@ class Paginator(object):
         self.order = order
 
 
-    def page(self):
-        pass
+    def page(self, number):
+        """
+        Return a page of results.
+
+        @param number: Page number.
+        """
+        limit = self.page_size
+        offset = number * limit
+        return self.crud.fetch(limit=limit, offset=offset, order=self.order)
 
 
