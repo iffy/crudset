@@ -98,7 +98,7 @@ class Crud(object):
 
 
     @defer.inlineCallbacks
-    def fetch(self, where=None):
+    def fetch(self, where=None, order=None, limit=None, offset=None):
         """
         Get a set of records.
 
@@ -106,9 +106,17 @@ class Crud(object):
         """
         query = self.base_query
 
-        # filter by extra where.
         if where is not None:
             query = query.where(where)
+
+        if order is not None:
+            query = query.order_by(order)
+
+        if limit is not None:
+            query = query.limit(limit)
+
+        if offset is not None:
+            query = query.offset(offset)
 
         result = yield self.engine.execute(query)
         rows = yield result.fetchall()
@@ -240,5 +248,20 @@ class Crud(object):
                 d[ref_name] = None
 
         return d
+
+
+class Paginator(object):
+    """
+    I provide pagination for a L{Crud}.
+    """
+
+    def __init__(self, crud, page_size=10, order=None):
+        self.crud = crud
+        self.page_size = page_size
+        self.order = order
+
+
+    def page(self):
+        pass
 
 

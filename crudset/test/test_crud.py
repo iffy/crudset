@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, ForeignKey
 from sqlalchemy.schema import CreateTable
 
 from crudset.error import MissingRequiredFields, NotEditable
-from crudset.crud import Crud, Policy
+from crudset.crud import Crud, Policy, Paginator
 
 from twisted.python import log
 import logging
@@ -203,6 +203,51 @@ class CrudTest(TestCase):
         fams = yield crud2.fetch()
         self.assertEqual(fams[0], {'surname': 'Johnson'}, "Should only show "
                          "the readable fields.")
+
+
+    @defer.inlineCallbacks
+    def test_fetch_limit(self):
+        """
+        You can limit the number of returned records.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families))
+        for i in xrange(10):
+            yield crud.create({'surname': 'Johnson %d' % (i,)})
+
+        fams = yield crud.fetch(limit=5)
+        self.assertEqual(len(fams), 5)
+
+
+    @defer.inlineCallbacks
+    def test_fetch_order(self):
+        """
+        You can specify an ordering
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families))
+        for i in xrange(10):
+            yield crud.create({'surname': 'sodkevoiuans'[i]})
+        
+        fams = yield crud.fetch(order=families.c.surname)
+        ordered = sorted(fams, key=lambda x:x['surname'])
+        self.assertEqual(fams, ordered, "Should be ordered")
+
+
+    @defer.inlineCallbacks
+    def test_fetch_offset(self):
+        """
+        You can offset the limit.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families))
+        fams = []
+        for i in xrange(10):
+            fam = yield crud.create({'surname': 'abcdefghijklmnop'[i]})
+            fams.append(fam)
+
+        results = yield crud.fetch(limit=5, offset=2, order=families.c.surname)
+        self.assertEqual(results, fams[2:2+5])
 
 
     def test_writeableIsReadableSusbset(self):
@@ -418,6 +463,45 @@ class CrudTest(TestCase):
         self.assertEqual(fish['name'], 'bob')
         self.assertEqual(fish['owner'], None)
         self.assertEqual(fish['family'], johnson)
+
+
+
+class PaginatorTest(TestCase):
+
+    timeout = 2
+
+
+    @defer.inlineCallbacks
+    def engine(self):
+        fname = self.mktemp()
+        engine = create_engine('sqlite:///' + fname,
+                               connect_args={'check_same_thread': False},
+                               reactor=reactor,
+                               strategy=TWISTED_STRATEGY)
+        yield engine.execute(CreateTable(families))
+        yield engine.execute(CreateTable(people))
+        yield engine.execute(CreateTable(pets))
+        defer.returnValue(engine)
+
+
+    @defer.inlineCallbacks
+    def test_page(self):
+        """
+        You can paginate a Crud
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(pets))
+        pager = Paginator(crud, page_size=10, order=pets.c.id)
+
+        monkeys = []
+        for i in xrange(40):
+            monkey = yield crud.create({'name': 'seamonkey %d' % (i,)})
+            monkeys.append(monkey)
+
+        page1 = yield pager.page(0)
+        self.assertEqual(page1, monkeys[:10])
+        page2 = yield pager.page(1)
+        self.assertEqual(page2, monkeys[10:20])
 
 
 
