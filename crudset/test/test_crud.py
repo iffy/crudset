@@ -48,7 +48,7 @@ pets = Table('pets', metadata,
 
 class CrudTest(TestCase):
 
-    timeout = 2
+    timeout = 10
 
 
     @defer.inlineCallbacks
@@ -511,7 +511,7 @@ class CrudTest(TestCase):
 
 class PaginatorTest(TestCase):
 
-    timeout = 2
+    timeout = 10
 
 
     @defer.inlineCallbacks
