@@ -548,6 +548,33 @@ class PaginatorTest(TestCase):
 
 
     @defer.inlineCallbacks
+    def test_page_where(self):
+        """
+        You can paginate filtered results, too
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(pets))
+        pager = Paginator(crud, page_size=3, order=pets.c.id)
+
+        things = []
+        _things = [
+            {'name': 'thing 1'},
+            {'name': 'thing 2'},
+            {'name': 'dog'},
+            {'name': 'cat'},
+            {'name': 'dog'},
+        ]
+        for thing in _things:
+            t = yield crud.create(thing)
+            things.append(t)
+
+        page1 = yield pager.page(0, pets.c.name.startswith('thing'))
+        self.assertEqual(page1, [things[0], things[1]])
+        count = yield pager.pageCount(pets.c.name.startswith('thing'))
+        self.assertEqual(count, 1)
+
+
+    @defer.inlineCallbacks
     def test_pageCount(self):
         """
         You can count the pages

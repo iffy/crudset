@@ -276,23 +276,25 @@ class Paginator(object):
         self.order = order
 
 
-    def page(self, number):
+    def page(self, number, where=None):
         """
         Return a page of results.
 
         @param number: Page number.
+        @param where: filter results by this where.
         """
         limit = self.page_size
         offset = number * limit
-        return self.crud.fetch(limit=limit, offset=offset, order=self.order)
+        return self.crud.fetch(where=where, limit=limit, offset=offset,
+                               order=self.order)
 
 
     @defer.inlineCallbacks
-    def pageCount(self):
+    def pageCount(self, where=None):
         """
         Return the total number of pages in the set.
         """
-        count = yield self.crud.count()
+        count = yield self.crud.count(where=where)
         pages = count / self.page_size
         if self.page_size % count:
             pages += 1
