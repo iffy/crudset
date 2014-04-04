@@ -19,7 +19,7 @@ class Policy(object):
             readable fields are writeable.
         
         @param readable: List of readable fields.  If C{None} then all
-            writeable fields are readable.
+            fields are readable.
         """
         self.table = table
         self.required = frozenset(required or [])
@@ -41,7 +41,45 @@ class Policy(object):
         if self.writeable > self.readable:
             raise ValueError('writeable columns must be a subset of readable '
                              'columns: writeable: %r, readable: %r' % (
-                             self.writeable, self.readable))      
+                             self.writeable, self.readable))
+
+
+    def narrow(self, also_required=None, writeable=None, readable=None):
+        """
+        Create a narrower, more restricted L{Policy}.
+
+        @param also_required: The list of B{additional} fields to require.
+
+        @param writeable: List of writeable fields.  If C{None} then the
+            writeable fields will be the narrower of the base writeable set and
+            C{readable}.
+
+        @param readable: List of readable fields.  If C{None} then this will
+            be the same as the base readable set.
+        """
+        required = set(also_required or []) | self.required
+        readable = readable or self.readable
+        
+        if writeable is None:
+            writeable = set(readable) & self.writeable
+
+        # make sure readable is a subset
+        extra = set(readable) - self.readable
+        if extra:
+            raise ValueError("Readable set isn't a subset of base policy."
+                             "  These are extra: %r" % (extra,))
+
+        # make sure writeable is a subset
+        extra = set(writeable) - self.writeable
+        if extra:
+            raise ValueError("Writeable set isn't a subset of base policy."
+                             "  These are extra: %r" % (extra,))
+
+        return Policy(
+            self.table,
+            required=required,
+            writeable=writeable,
+            readable=readable)
 
 
 
