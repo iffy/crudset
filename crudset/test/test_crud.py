@@ -583,6 +583,23 @@ class CrudTest(TestCase):
         self.assertEqual(fixed.table_map, {'foo': 'bar'})
 
 
+    def test_withPolicy(self):
+        """
+        You can change the policy of the crud.
+        """
+        pol1 = Policy(families)
+        crud = Crud(pol1, references=[1,2,3],
+                    table_attr='foo', table_map={'a': 'b'}).fix({'id':10})
+
+        pol2 = Policy(pets)
+        crud2 = crud.withPolicy(pol2, [4,5,6])
+        self.assertEqual(crud2.policy, pol2)
+        self.assertEqual(crud2.references, [4,5,6])
+        self.assertEqual(crud2.table_attr, 'foo')
+        self.assertEqual(crud2.table_map, {'a': 'b'})
+        self.assertEqual(crud2._fixed, {'id': 10})
+
+
 class PolicyTest(TestCase):
 
 

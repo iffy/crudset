@@ -131,6 +131,15 @@ class Crud(object):
         return crud
 
 
+    def withPolicy(self, policy, references=None):
+        """
+        Create a new crud with a different policy and references.
+        """
+        crud = Crud(policy, references, self.table_attr, self.table_map)
+        crud._fixed = self._fixed.copy()
+        return crud
+
+
     @defer.inlineCallbacks
     def create(self, engine, attrs):
         # check for editability
