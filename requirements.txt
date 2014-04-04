@@ -1,2 +1,2 @@
 SQLAlchemy
-git+git://github.com/alex/alchimia.git@c854181b963e4db6d71b5029f6f4cc67d93306e5#egg=alchimia-0.4
+git+git://github.com/alex/alchimia.git@c854181b963e4db6d71b5029f6f4cc67d93306e5#egg=alchimia==0.4
