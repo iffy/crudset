@@ -14,13 +14,14 @@ In this code, there are two roles:
 <!-- test -->
 
 ```python
-from crudset.crud import Crud, Policy
+from crudset import Crud, Policy
 
 from twisted.internet import defer, task
 
 from sqlalchemy import MetaData, Table, Column, Integer, String, create_engine
 from sqlalchemy import Boolean
 from sqlalchemy.schema import CreateTable
+from sqlalchemy.pool import StaticPool
 
 from alchimia import TWISTED_STRATEGY
 
@@ -57,7 +58,8 @@ def main(reactor):
     engine = create_engine('sqlite://',
                            connect_args={'check_same_thread': False},
                            reactor=reactor,
-                           strategy=TWISTED_STRATEGY)
+                           strategy=TWISTED_STRATEGY,
+                           poolclass=StaticPool)
     yield engine.execute(CreateTable(people))
 
     # manager
@@ -82,6 +84,37 @@ def main(reactor):
 task.react(main, [])
 ```
 
+### Narrowing ###
+
+You can build policies from other policies.
+
+<!-- test -->
+
+```python
+from crudset import Policy
+
+from sqlalchemy import MetaData, Table, Column, Integer, String, Boolean
+
+metadata = MetaData()
+people = Table('people', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('is_soylent_green', Boolean),
+    Column('name', String),
+    Column('pay_grade', Integer),
+)
+
+# prevent changing the id at the system level
+system_policy = Policy(people,
+    writeable=['is_soylent_green', 'name', 'pay_grade'],
+)
+
+# prevent changing everything but name at the user level
+user_policy = system_policy.narrow(
+    readable=['name', 'pay_grade'],
+    writeable=['name'],
+)
+```
+
 
 ## Fixed values ##
 
@@ -90,12 +123,13 @@ You can create child CRUDs with certain attributes fixed.  For example:
 <!-- test -->
 
 ```python
-from crudset.crud import Crud, Policy
+from crudset import Crud, Policy
 
 from twisted.internet import defer, task
 
 from sqlalchemy import MetaData, Table, Column, Integer, String, create_engine
 from sqlalchemy.schema import CreateTable
+from sqlalchemy.pool import StaticPool
 
 from alchimia import TWISTED_STRATEGY
 
@@ -112,7 +146,8 @@ def main(reactor):
     engine = create_engine('sqlite://',
                            connect_args={'check_same_thread': False},
                            reactor=reactor,
-                           strategy=TWISTED_STRATEGY)
+                           strategy=TWISTED_STRATEGY,
+                           poolclass=StaticPool)
     yield engine.execute(CreateTable(people))
 
     main_crud = Crud(engine, Policy(people))    
@@ -136,12 +171,13 @@ You can paginate a CRUD.
 <!-- test -->
 
 ```python
-from crudset.crud import Crud, Policy, Paginator
+from crudset import Crud, Policy, Paginator
 
 from twisted.internet import defer, task
 
 from sqlalchemy import MetaData, Table, Column, Integer, String, create_engine
 from sqlalchemy.schema import CreateTable
+from sqlalchemy.pool import StaticPool
 
 from alchimia import TWISTED_STRATEGY
 
@@ -153,12 +189,11 @@ Books = Table('books', metadata,
 
 @defer.inlineCallbacks
 def main(reactor):
-    import tempfile
-    fh, name = tempfile.mkstemp()
-    engine = create_engine('sqlite:///' + name,
+    engine = create_engine('sqlite://',
                            connect_args={'check_same_thread': False},
                            reactor=reactor,
-                           strategy=TWISTED_STRATEGY)
+                           strategy=TWISTED_STRATEGY,
+                           poolclass=StaticPool)
     yield engine.execute(CreateTable(Books))
     
     crud = Crud(engine, Policy(Books))

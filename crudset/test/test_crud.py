@@ -6,6 +6,7 @@ from alchimia import TWISTED_STRATEGY
 from sqlalchemy import MetaData, Table, Column, Integer, String, DateTime
 from sqlalchemy import create_engine, ForeignKey
 from sqlalchemy.schema import CreateTable
+from sqlalchemy.pool import StaticPool
 
 from crudset.error import MissingRequiredFields, NotEditable
 from crudset.crud import Crud, Policy, Paginator
@@ -53,11 +54,11 @@ class CrudTest(TestCase):
 
     @defer.inlineCallbacks
     def engine(self):
-        fname = self.mktemp()
-        engine = create_engine('sqlite:///' + fname,
+        engine = create_engine('sqlite://',
                                connect_args={'check_same_thread': False},
                                reactor=reactor,
-                               strategy=TWISTED_STRATEGY)
+                               strategy=TWISTED_STRATEGY,
+                               poolclass=StaticPool)
         yield engine.execute(CreateTable(families))
         yield engine.execute(CreateTable(people))
         yield engine.execute(CreateTable(pets))
@@ -293,16 +294,6 @@ class CrudTest(TestCase):
         self.assertEqual(count, 1)
 
 
-    def test_writeableIsReadableSusbset(self):
-        """
-        The writeable list must be a subset of the readable list.
-        """
-        self.assertRaises(ValueError,
-            Policy, families,
-            writeable=['surname', 'location'],
-            readable=['surname'])
-
-
     @defer.inlineCallbacks
     def test_update(self):
         """
@@ -509,6 +500,95 @@ class CrudTest(TestCase):
 
 
 
+class PolicyTest(TestCase):
+
+
+    def test_writeableDefaultReadable(self):
+        """
+        The writeable set should be the readable set if not specified.
+        """
+        p = Policy(families, readable=['surname'])
+        self.assertEqual(p.writeable, set(['surname']))
+
+
+    def test_writeableIsReadableSusbset(self):
+        """
+        The writeable list must be a subset of the readable list.
+        """
+        self.assertRaises(ValueError,
+            Policy, families,
+            writeable=['surname', 'location'],
+            readable=['surname'])
+
+
+    def test_narrow_readable(self):
+        """
+        You can create policies from other policies with the options narrowed.
+        """
+        base = Policy(families)
+        narrowed = base.narrow(readable=['surname'])
+        self.assertEqual(narrowed.table, base.table)
+        self.assertEqual(narrowed.readable, set(['surname']))
+        self.assertEqual(narrowed.writeable, set(['surname']))
+
+
+    def test_narrow_writeable(self):
+        """
+        You can narrow the set of writeable fields.
+        """
+        base = Policy(families)
+        narrowed = base.narrow(writeable=['surname'])
+        self.assertEqual(narrowed.writeable, set(['surname']),
+            "The writeable set should be as specified")
+        self.assertEqual(narrowed.readable, base.readable,
+            "The readable set should not be restricted")
+
+
+    def test_narrow_required(self):
+        """
+        You can additionally require fields.
+        """
+        base = Policy(families, required=['surname'])
+        narrowed = base.narrow(also_required=['location'])
+        self.assertEqual(narrowed.required, set(['surname', 'location']),
+                         "Required should be a union of fields")
+
+
+    def test_narrow_default(self):
+        """
+        By default, the narrower policy should not be larger than the base.
+        """
+        base = Policy(families,
+            required=['surname'],
+            readable=['surname', 'location'],
+            writeable=['surname'])
+        narrowed = base.narrow()
+        self.assertEqual(narrowed.required, set(['surname']),
+            "The required set should match the base")
+        self.assertEqual(narrowed.readable, set(['surname', 'location']),
+            "The readable set should match the base")
+        self.assertEqual(narrowed.writeable, set(['surname']),
+            "The writeable set should match the base")
+
+    def test_narrow_readableSubset(self):
+        """
+        The readable set must be a subset of the base policy's readable set.
+        """
+        base = Policy(families, readable=['surname'])
+        self.assertRaises(ValueError, base.narrow,
+            readable=['surname', 'location'])
+
+
+    def test_narrow_writeableSubset(self):
+        """
+        The writeable fields must be a subset of the base policy's writeable
+        set.
+        """
+        base = Policy(families, writeable=['surname'])
+        self.assertRaises(ValueError, base.narrow,
+            writeable=['surname', 'location'])
+
+
 class PaginatorTest(TestCase):
 
     timeout = 10
@@ -516,11 +596,11 @@ class PaginatorTest(TestCase):
 
     @defer.inlineCallbacks
     def engine(self):
-        fname = self.mktemp()
-        engine = create_engine('sqlite:///' + fname,
+        engine = create_engine('sqlite://',
                                connect_args={'check_same_thread': False},
                                reactor=reactor,
-                               strategy=TWISTED_STRATEGY)
+                               strategy=TWISTED_STRATEGY,
+                               poolclass=StaticPool)
         yield engine.execute(CreateTable(families))
         yield engine.execute(CreateTable(people))
         yield engine.execute(CreateTable(pets))

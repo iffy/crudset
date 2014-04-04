@@ -38,7 +38,8 @@ class ExampleTest(TestCase):
             log.msg('stderr: %r' % (stderr,))
             log.msg('exit: %r' % (code,))
             if code != 0:
-                raise Exception('\n' + '-'*30 + '\n' + name + ':\n' + stderr)                
+                raise Exception('\n' + '-'*30 + '\n' + name + ':\n' + stderr)
+            print 'done with', name
         return d.addCallback(check)
 
 
