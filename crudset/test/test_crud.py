@@ -499,6 +499,66 @@ class CrudTest(TestCase):
         self.assertEqual(fish['family'], johnson)
 
 
+    @defer.inlineCallbacks
+    def test_table_attr(self):
+        """
+        You can expose the table names as an attribute.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families), table_attr='_object')
+        r = yield crud.create({'surname': 'Jones'})
+        self.assertEqual(r['_object'], 'family')
+        
+        rlist = yield crud.fetch()
+        self.assertEqual(rlist[0]['_object'], 'family')
+
+        rlist = yield crud.update({'surname': 'Jamison'})
+        self.assertEqual(rlist[0]['_object'], 'family')
+
+
+    @defer.inlineCallbacks
+    def test_table_attr_reference(self):
+        """
+        table attr works with references, too.
+        """
+        engine = yield self.engine()
+        fam_crud = Crud(engine, Policy(families))
+        family = yield fam_crud.create({'surname': 'Jones'})
+
+        crud = Crud(engine, Policy(people), table_attr='foo', references=[
+            ('family', Policy(families), people.c.family_id == families.c.id),
+        ])
+        sam = yield crud.create({'name': 'Sam', 'family_id': family['id']})
+        self.assertEqual(sam['foo'], 'people')
+        self.assertEqual(sam['family']['foo'], 'family')
+
+
+    @defer.inlineCallbacks
+    def test_table_map(self):
+        """
+        You can map table names to something else.
+        """
+        engine = yield self.engine()
+        fam_crud = Crud(engine, Policy(families))
+        family = yield fam_crud.create({'surname': 'Jones'})
+
+        crud = Crud(
+            engine,
+            Policy(people),
+            table_attr='foo',
+            table_map={
+                people: 'Person',
+                families: 'Aardvark',
+            },
+            references=[
+            ('family', Policy(families), people.c.family_id == families.c.id),
+        ])
+        sam = yield crud.create({'name': 'Sam', 'family_id': family['id']})
+        self.assertEqual(sam['foo'], 'Person')
+        self.assertEqual(sam['family']['foo'], 'Aardvark')
+
+
+
 
 class PolicyTest(TestCase):
 
