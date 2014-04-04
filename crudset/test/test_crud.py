@@ -499,6 +499,18 @@ class CrudTest(TestCase):
         self.assertEqual(fish['family'], johnson)
 
 
+    def test_references_fix(self):
+        """
+        Fixed cruds should retain their references.
+        """
+        crud = Crud(None,
+            Policy(pets), references=[
+            ('family', Policy(families), pets.c.family_id == families.c.id),
+        ])
+        fixed = crud.fix({'id': 12})
+        self.assertEqual(crud.references, fixed.references)
+
+
     @defer.inlineCallbacks
     def test_table_attr(self):
         """
@@ -558,6 +570,18 @@ class CrudTest(TestCase):
         self.assertEqual(sam['family']['foo'], 'Aardvark')
 
 
+    def test_table_map_attr_fix(self):
+        """
+        Fixed Cruds should retain the table_attr and map.
+        """
+        crud = Crud(None,
+            Policy(families),
+            table_attr='foo',
+            table_map={'foo': 'bar'},
+        )
+        fixed = crud.fix({'id': 56})
+        self.assertEqual(fixed.table_attr, 'foo')
+        self.assertEqual(fixed.table_map, {'foo': 'bar'})
 
 
 class PolicyTest(TestCase):
