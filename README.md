@@ -219,3 +219,52 @@ def main(reactor):
 
 task.react(main, [])
 ```
+
+
+## Table names ##
+
+You can expose the table name of an object, or even map it to a different name.
+
+<!-- test -->
+
+```python
+from crudset import Crud, Policy
+
+from twisted.internet import defer, task
+
+from sqlalchemy import MetaData, Table, Column, Integer, String, create_engine
+from sqlalchemy.schema import CreateTable
+from sqlalchemy.pool import StaticPool
+
+from alchimia import TWISTED_STRATEGY
+
+metadata = MetaData()
+people = Table('people', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('team_id', Integer),
+    Column('name', String),
+)
+
+
+@defer.inlineCallbacks
+def main(reactor):
+    engine = create_engine('sqlite://',
+                           connect_args={'check_same_thread': False},
+                           reactor=reactor,
+                           strategy=TWISTED_STRATEGY,
+                           poolclass=StaticPool)
+    yield engine.execute(CreateTable(people))
+
+    crud1 = Crud(engine, Policy(people), table_attr='mytable')
+
+    john = yield crud1.create({'name': 'John'})
+    assert john['mytable'] == 'people', john
+
+    crud2 = Crud(engine, Policy(people), table_attr='Object',
+                 table_map={people: 'Person'})
+    people_list = yield crud2.fetch()
+    person1 = people_list[0]
+    assert person1['Object'] == 'Person', person1
+
+task.react(main, [])
+```

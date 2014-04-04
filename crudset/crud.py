@@ -92,7 +92,8 @@ class Crud(object):
     attributes fixed (unchangeable by the user).
     """
 
-    def __init__(self, engine, policy, references=[]):
+    def __init__(self, engine, policy, references=[], table_attr=None,
+                 table_map=None):
         """
         @param engine: An SQLAlchemy engine; preferrably one made with
             alchimia's TWISTED_STRATEGY.
@@ -101,10 +102,19 @@ class Crud(object):
 
         @param references: A list of tuples with 3 things:
             (attr_name, policy, join_on constraint)
+
+        @param table_attr: If set, then the data dictionaries returned by my
+            methods will contain an item with C{table_attr} key and SQL table
+            name as the value.  Man that's confusing...
+
+        @param table_map: If C{table_attr} is set then this dictionary will
+            map table names to something else.
         """
         self.engine = engine
         self.policy = policy
         self.references = references
+        self.table_attr = table_attr
+        self.table_map = table_map or {}
         self._fixed = {}
         self._select_columns = []
         self._base_query = None
@@ -287,8 +297,14 @@ class Crud(object):
         defer.returnValue(data)
 
 
+    def _tableName(self, table):
+        return self.table_map.get(table, table.name)
+
+
     def _rowToDict(self, row):
         d = {}
+        if self.table_attr:
+            d[self.table_attr] = self._tableName(self.policy.table)
         # XXX the null-reference checking seems less than optimal (lots of
         # looping and branching.  Maybe there's a way to have the response
         # tell us clearly whether the record is null or not)
@@ -303,6 +319,8 @@ class Crud(object):
                 # referenced object attribute
                 if ref_name not in d:
                     d[ref_name] = {}
+                    if self.table_attr:
+                        d[ref_name][self.table_attr] = self._tableName(col.table)
                 d[ref_name][col.name] = v
                 if v is not None:
                     has_value[ref_name] = True
