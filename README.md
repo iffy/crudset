@@ -1,6 +1,6 @@
-`release` branch [![Build Status](https://secure.travis-ci.org/iffy/crudset.png?branch=release)](http://travis-ci.org/iffy/crudset)
+[![Build Status](https://secure.travis-ci.org/iffy/crudset.png?branch=release)](http://travis-ci.org/iffy/crudset) `release` branch
 
-`dev` branch [![Build Status](https://secure.travis-ci.org/iffy/crudset.png?branch=dev)](http://travis-ci.org/iffy/crudset)
+[![Build Status](https://secure.travis-ci.org/iffy/crudset.png?branch=dev)](http://travis-ci.org/iffy/crudset) `dev` branch 
 
 # crudset #
 
