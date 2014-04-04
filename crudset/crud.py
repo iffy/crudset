@@ -128,7 +128,8 @@ class Crud(object):
 
         @return: A new L{Crud}.
         """
-        crud = Crud(self.engine, self.policy)
+        crud = Crud(self.engine, self.policy, self.references, self.table_attr,
+                    self.table_map)
         crud._fixed = self._fixed.copy()
         crud._fixed.update(attrs)
         return crud
