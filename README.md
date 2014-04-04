@@ -54,6 +54,9 @@ employee_policy = Policy(people,
     writeable=['name'],
 )
 
+manager_crud = Crud(manager_policy)
+employee_crud = Crud(employee_policy)
+
 
 @defer.inlineCallbacks
 def main(reactor):
@@ -65,20 +68,18 @@ def main(reactor):
     yield engine.execute(CreateTable(people))
 
     # manager
-    manager_crud = Crud(engine, manager_policy)
-    yield manager_crud.create({
+    yield manager_crud.create(engine, {
         'is_soylent_green': True,
         'name': 'Fern',
         'pay_grade': 100,
     })
-    yield manager_crud.create({
+    yield manager_crud.create(engine, {
         'name': 'Joe',
         'pay_grade': 90,
     })
 
     # employee
-    employee_crud = Crud(engine, employee_policy)
-    employees = yield employee_crud.fetch()
+    employees = yield employee_crud.fetch(engine)
     # This includes only the readable fields from the employee_policy above.
     print employees
 
@@ -152,14 +153,14 @@ def main(reactor):
                            poolclass=StaticPool)
     yield engine.execute(CreateTable(people))
 
-    main_crud = Crud(engine, Policy(people))    
+    main_crud = Crud(Policy(people))
     team3_crud = main_crud.fix({'team_id': 3})
     team4_crud = main_crud.fix({'team_id': 4})
 
-    john = yield team4_crud.create({'name': 'John'})
+    john = yield team4_crud.create(engine, {'name': 'John'})
     assert john['team_id'] == 4, john
 
-    members = yield team3_crud.fetch()
+    members = yield team3_crud.fetch(engine)
     assert members == [], members
 
 task.react(main, [])
@@ -198,25 +199,25 @@ def main(reactor):
                            poolclass=StaticPool)
     yield engine.execute(CreateTable(Books))
     
-    crud = Crud(engine, Policy(Books))
+    crud = Crud(Policy(Books))
 
     for i in xrange(432):
-        yield crud.create({'title': 'Book %s' % (i,)})
+        yield crud.create(engine, {'title': 'Book %s' % (i,)})
     
     pager = Paginator(crud, page_size=13)
     
-    count = yield pager.pageCount()
+    count = yield pager.pageCount(engine)
     assert count == 34, count
 
-    page3 = yield pager.page(2)
+    page3 = yield pager.page(engine, 2)
     assert len(page3) == 13, page3
     print page3
 
     # you can filter, too
-    count = yield pager.pageCount(Books.c.title.like('% 1'))
+    count = yield pager.pageCount(engine, Books.c.title.like('% 1'))
     print count
 
-    page1 = yield pager.page(0, Books.c.title.like('% 1'))
+    page1 = yield pager.page(engine, 0, Books.c.title.like('% 1'))
     print page1
 
 task.react(main, [])
@@ -257,14 +258,14 @@ def main(reactor):
                            poolclass=StaticPool)
     yield engine.execute(CreateTable(people))
 
-    crud1 = Crud(engine, Policy(people), table_attr='mytable')
+    crud1 = Crud(Policy(people), table_attr='mytable')
 
-    john = yield crud1.create({'name': 'John'})
+    john = yield crud1.create(engine, {'name': 'John'})
     assert john['mytable'] == 'people', john
 
-    crud2 = Crud(engine, Policy(people), table_attr='Object',
+    crud2 = Crud(Policy(people), table_attr='Object',
                  table_map={people: 'Person'})
-    people_list = yield crud2.fetch()
+    people_list = yield crud2.fetch(engine)
     person1 = people_list[0]
     assert person1['Object'] == 'Person', person1
 

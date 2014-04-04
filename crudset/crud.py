@@ -92,12 +92,9 @@ class Crud(object):
     attributes fixed (unchangeable by the user).
     """
 
-    def __init__(self, engine, policy, references=[], table_attr=None,
+    def __init__(self, policy, references=[], table_attr=None,
                  table_map=None):
         """
-        @param engine: An SQLAlchemy engine; preferrably one made with
-            alchimia's TWISTED_STRATEGY.
-
         @param policy: A L{Policy} instance.
 
         @param references: A list of tuples with 3 things:
@@ -110,7 +107,6 @@ class Crud(object):
         @param table_map: If C{table_attr} is set then this dictionary will
             map table names to something else.
         """
-        self.engine = engine
         self.policy = policy
         self.references = references
         self.table_attr = table_attr
@@ -128,7 +124,7 @@ class Crud(object):
 
         @return: A new L{Crud}.
         """
-        crud = Crud(self.engine, self.policy, self.references, self.table_attr,
+        crud = Crud(self.policy, self.references, self.table_attr,
                     self.table_map)
         crud._fixed = self._fixed.copy()
         crud._fixed.update(attrs)
@@ -136,7 +132,7 @@ class Crud(object):
 
 
     @defer.inlineCallbacks
-    def create(self, attrs):
+    def create(self, engine, attrs):
         # check for editability
         forbidden = set(attrs) - self.policy.writeable
         if forbidden:
@@ -152,14 +148,14 @@ class Crud(object):
 
         # do it
         table = self.policy.table
-        result = yield self.engine.execute(table.insert().values(**attrs))
+        result = yield engine.execute(table.insert().values(**attrs))
         pk = result.inserted_primary_key
-        obj = yield self._getOne(pk)
+        obj = yield self._getOne(engine, pk)
         defer.returnValue(obj)
 
 
     @defer.inlineCallbacks
-    def fetch(self, where=None, order=None, limit=None, offset=None):
+    def fetch(self, engine, where=None, order=None, limit=None, offset=None):
         """
         Get a set of records.
 
@@ -179,7 +175,7 @@ class Crud(object):
         if offset is not None:
             query = query.offset(offset)
 
-        result = yield self.engine.execute(query)
+        result = yield engine.execute(query)
         rows = yield result.fetchall()
         ret = []
         for row in rows:
@@ -188,7 +184,7 @@ class Crud(object):
 
 
     @defer.inlineCallbacks
-    def count(self, where=None):
+    def count(self, engine, where=None):
         """
         Count a set of records.
         """
@@ -197,13 +193,13 @@ class Crud(object):
         if where is not None:
             query = query.where(where)
 
-        result = yield self.engine.execute(query.count())
+        result = yield engine.execute(query.count())
         rows = yield result.fetchone()
         defer.returnValue(rows[0])
 
 
     @defer.inlineCallbacks
-    def update(self, attrs, where=None):
+    def update(self, engine, attrs, where=None):
         """
         Update a set of records.
         """
@@ -219,14 +215,14 @@ class Crud(object):
             up = up.where(where)
 
         up = up.values(**attrs)
-        yield self.engine.execute(up)
+        yield engine.execute(up)
 
-        rows = yield self.fetch(where)
+        rows = yield self.fetch(engine, where)
         defer.returnValue(rows)
 
 
     @defer.inlineCallbacks
-    def delete(self, where=None):
+    def delete(self, engine, where=None):
         """
         Delete a set of records.
         """
@@ -236,7 +232,7 @@ class Crud(object):
         if where is not None:
             delete = delete.where(where)
 
-        yield self.engine.execute(delete)
+        yield engine.execute(delete)
 
 
     @property
@@ -283,7 +279,7 @@ class Crud(object):
 
 
     @defer.inlineCallbacks
-    def _getOne(self, pk):
+    def _getOne(self, engine, pk):
         # base query
         query = self.base_query
         
@@ -292,7 +288,7 @@ class Crud(object):
         where = [x == y for (x,y) in zip(table.primary_key.columns, pk)]
         query = query.where(*where)
         
-        result = yield self.engine.execute(query)
+        result = yield engine.execute(query)
         row = yield result.fetchone()
         data = self._rowToDict(row)
         defer.returnValue(data)
@@ -345,7 +341,7 @@ class Paginator(object):
         self.order = order
 
 
-    def page(self, number, where=None):
+    def page(self, engine, number, where=None):
         """
         Return a page of results.
 
@@ -354,16 +350,16 @@ class Paginator(object):
         """
         limit = self.page_size
         offset = number * limit
-        return self.crud.fetch(where=where, limit=limit, offset=offset,
+        return self.crud.fetch(engine, where=where, limit=limit, offset=offset,
                                order=self.order)
 
 
     @defer.inlineCallbacks
-    def pageCount(self, where=None):
+    def pageCount(self, engine, where=None):
         """
         Return the total number of pages in the set.
         """
-        count = yield self.crud.count(where=where)
+        count = yield self.crud.count(engine, where=where)
         pages = count / self.page_size
         if self.page_size % count:
             pages += 1

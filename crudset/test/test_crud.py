@@ -71,9 +71,9 @@ class CrudTest(TestCase):
         You can create an object.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families, writeable=['surname']))
+        crud = Crud(Policy(families, writeable=['surname']))
 
-        family = yield crud.create({'surname': 'Jones'})
+        family = yield crud.create(engine, {'surname': 'Jones'})
         self.assertEqual(family['surname'], 'Jones')
         self.assertNotEqual(family['id'], None)
         self.assertEqual(family['location'], None)
@@ -85,13 +85,13 @@ class CrudTest(TestCase):
         You can create a Crud with fixed attributes.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families, writeable=['surname']))
+        crud = Crud(Policy(families, writeable=['surname']))
         crud = crud.fix({'surname':'Hammond'})
 
-        family = yield crud.create({})
+        family = yield crud.create(engine, {})
         self.assertEqual(family['surname'], 'Hammond')
 
-        fam2 = yield crud.create({'surname': 'Jones'})
+        fam2 = yield crud.create(engine, {'surname': 'Jones'})
         self.assertEqual(fam2['surname'], 'Hammond')
 
 
@@ -101,8 +101,8 @@ class CrudTest(TestCase):
         You can require fields to be set.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families, required=['surname']))
-        exc = self.failureResultOf(crud.create({})).value
+        crud = Crud(Policy(families, required=['surname']))
+        exc = self.failureResultOf(crud.create(engine, {})).value
         self.assertTrue(isinstance(exc, MissingRequiredFields), exc)
 
 
@@ -112,9 +112,9 @@ class CrudTest(TestCase):
         You can only set writeable fields.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families, writeable=[]))
+        crud = Crud(Policy(families, writeable=[]))
 
-        exc = self.failureResultOf(crud.create({'surname':'foo'})).value
+        exc = self.failureResultOf(crud.create(engine, {'surname':'foo'})).value
         self.assertTrue(isinstance(exc, NotEditable))
 
 
@@ -124,9 +124,9 @@ class CrudTest(TestCase):
         Fixed fields can be used to update non-writeable fields.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families, writeable=[])).fix({'surname':'bo'})
+        crud = Crud(Policy(families, writeable=[])).fix({'surname':'bo'})
 
-        family = yield crud.create({})
+        family = yield crud.create(engine, {})
         self.assertEqual(family['surname'], 'bo')
 
 
@@ -136,11 +136,11 @@ class CrudTest(TestCase):
         You can fix attributes one after the other.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families, writeable=['location', 'surname']))
+        crud = Crud(Policy(families, writeable=['location', 'surname']))
         crud = crud.fix({'surname': 'Jones'})
         crud = crud.fix({'location': 'Sunnyville'})
 
-        family = yield crud.create({})
+        family = yield crud.create(engine, {})
         self.assertEqual(family['surname'], 'Jones')
         self.assertEqual(family['location'], 'Sunnyville')
 
@@ -152,10 +152,10 @@ class CrudTest(TestCase):
         by default.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
-        yield crud.create({'surname': '13'})
+        crud = Crud(Policy(families))
+        yield crud.create(engine, {'surname': '13'})
 
-        fams = yield crud.fetch()
+        fams = yield crud.fetch(engine)
         self.assertEqual(len(fams), 1)
         self.assertEqual(fams[0]['surname'], '13')
 
@@ -166,11 +166,11 @@ class CrudTest(TestCase):
         Fixed attributes restrict the fetched objects.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
-        yield crud.create({'surname': 'Jones'})
+        crud = Crud(Policy(families))
+        yield crud.create(engine, {'surname': 'Jones'})
 
         crud2 = crud.fix({'surname': 'Johnson'})
-        fams = yield crud2.fetch()
+        fams = yield crud2.fetch(engine)
         self.assertEqual(len(fams), 0, "Should only find (non-existent) "
                          "records matching the fixed values")
 
@@ -181,12 +181,12 @@ class CrudTest(TestCase):
         You can limit even further.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
+        crud = Crud(Policy(families))
 
         for i in xrange(10):
-            yield crud.create({'surname': 'Family %d' % (i,)})
+            yield crud.create(engine, {'surname': 'Family %d' % (i,)})
 
-        family4 = yield crud.fetch(families.c.surname == 'Family 4')
+        family4 = yield crud.fetch(engine, families.c.surname == 'Family 4')
         self.assertEqual(len(family4), 1)
         self.assertEqual(family4[0]['surname'], 'Family 4')
 
@@ -197,11 +197,11 @@ class CrudTest(TestCase):
         You can limit the set of readable fields.
         """
         engine = yield self.engine()
-        crud1 = Crud(engine, Policy(families))
-        yield crud1.create({'surname': 'Johnson', 'location': 'Alabama'})
+        crud1 = Crud(Policy(families))
+        yield crud1.create(engine, {'surname': 'Johnson', 'location': 'Alabama'})
         
-        crud2 = Crud(engine, Policy(families, readable=['surname']))
-        fams = yield crud2.fetch()
+        crud2 = Crud(Policy(families, readable=['surname']))
+        fams = yield crud2.fetch(engine)
         self.assertEqual(fams[0], {'surname': 'Johnson'}, "Should only show "
                          "the readable fields.")
 
@@ -212,11 +212,11 @@ class CrudTest(TestCase):
         You can limit the number of returned records.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
+        crud = Crud(Policy(families))
         for i in xrange(10):
-            yield crud.create({'surname': 'Johnson %d' % (i,)})
+            yield crud.create(engine, {'surname': 'Johnson %d' % (i,)})
 
-        fams = yield crud.fetch(limit=5)
+        fams = yield crud.fetch(engine, limit=5)
         self.assertEqual(len(fams), 5)
 
 
@@ -226,11 +226,11 @@ class CrudTest(TestCase):
         You can specify an ordering
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
+        crud = Crud(Policy(families))
         for i in xrange(10):
-            yield crud.create({'surname': 'sodkevoiuans'[i]})
+            yield crud.create(engine, {'surname': 'sodkevoiuans'[i]})
         
-        fams = yield crud.fetch(order=families.c.surname)
+        fams = yield crud.fetch(engine, order=families.c.surname)
         ordered = sorted(fams, key=lambda x:x['surname'])
         self.assertEqual(fams, ordered, "Should be ordered")
 
@@ -241,13 +241,13 @@ class CrudTest(TestCase):
         You can offset the limit.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
+        crud = Crud(Policy(families))
         fams = []
         for i in xrange(10):
-            fam = yield crud.create({'surname': 'abcdefghijklmnop'[i]})
+            fam = yield crud.create(engine, {'surname': 'abcdefghijklmnop'[i]})
             fams.append(fam)
 
-        results = yield crud.fetch(limit=5, offset=2, order=families.c.surname)
+        results = yield crud.fetch(engine, limit=5, offset=2, order=families.c.surname)
         self.assertEqual(results, fams[2:2+5])
 
 
@@ -257,11 +257,11 @@ class CrudTest(TestCase):
         You can count the records.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
+        crud = Crud(Policy(families))
         for i in xrange(14):
-            yield crud.create({'surname': str(i)})
+            yield crud.create(engine, {'surname': str(i)})
 
-        count = yield crud.count()
+        count = yield crud.count(engine)
         self.assertEqual(count, 14)
 
 
@@ -271,11 +271,11 @@ class CrudTest(TestCase):
         You can count filtered records.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
+        crud = Crud(Policy(families))
         for i in xrange(14):
-            yield crud.create({'surname': str(i)})
+            yield crud.create(engine, {'surname': str(i)})
 
-        count = yield crud.count(families.c.surname == '12')
+        count = yield crud.count(engine, families.c.surname == '12')
         self.assertEqual(count, 1)
 
 
@@ -285,12 +285,12 @@ class CrudTest(TestCase):
         The count is restricted by fixed attributes.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
-        yield crud.create({'surname': 'Jones'})
-        yield crud.create({'surname': 'Arnold'})
+        crud = Crud(Policy(families))
+        yield crud.create(engine, {'surname': 'Jones'})
+        yield crud.create(engine, {'surname': 'Arnold'})
 
         crud2 = crud.fix({'surname': 'Arnold'})
-        count = yield crud2.count()
+        count = yield crud2.count(engine)
         self.assertEqual(count, 1)
 
 
@@ -300,9 +300,9 @@ class CrudTest(TestCase):
         You can update sets.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
-        yield crud.create({'surname': 'Jones'})
-        fams = yield crud.update({'surname': 'Jamison'})
+        crud = Crud(Policy(families))
+        yield crud.create(engine, {'surname': 'Jones'})
+        fams = yield crud.update(engine, {'surname': 'Jamison'})
         self.assertEqual(len(fams), 1)
         self.assertEqual(fams[0]['surname'], 'Jamison')
 
@@ -313,17 +313,17 @@ class CrudTest(TestCase):
         Fixed attributes are part of the update.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
-        yield crud.create({'surname': 'Jones', 'location': 'anvilania'})
-        yield crud.create({'surname': 'James', 'location': 'gotham'})
+        crud = Crud(Policy(families))
+        yield crud.create(engine, {'surname': 'Jones', 'location': 'anvilania'})
+        yield crud.create(engine, {'surname': 'James', 'location': 'gotham'})
 
         crud2 = crud.fix({'surname': 'James'})
-        yield crud2.update({'location': 'middle earth'})
+        yield crud2.update(engine, {'location': 'middle earth'})
 
-        fams = yield crud.fetch(families.c.surname == u'Jones')
+        fams = yield crud.fetch(engine, families.c.surname == u'Jones')
         self.assertEqual(fams[0]['location'], 'anvilania')
 
-        fams = yield crud.fetch(families.c.surname == u'James')
+        fams = yield crud.fetch(engine, families.c.surname == u'James')
         self.assertEqual(fams[0]['location'], 'middle earth')
 
 
@@ -333,18 +333,18 @@ class CrudTest(TestCase):
         You can filter the update by expression, too.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
-        yield crud.create({'surname': 'Jones', 'location': 'anvilania'})
-        yield crud.create({'surname': 'James', 'location': 'gotham'})
+        crud = Crud(Policy(families))
+        yield crud.create(engine, {'surname': 'Jones', 'location': 'anvilania'})
+        yield crud.create(engine, {'surname': 'James', 'location': 'gotham'})
 
-        fams = yield crud.update({'location': 'middle earth'},
+        fams = yield crud.update(engine, {'location': 'middle earth'},
                                  families.c.surname == 'James')
         self.assertEqual(len(fams), 1)
 
-        fams = yield crud.fetch(families.c.surname == u'Jones')
+        fams = yield crud.fetch(engine, families.c.surname == u'Jones')
         self.assertEqual(fams[0]['location'], 'anvilania')
 
-        fams = yield crud.fetch(families.c.surname == u'James')
+        fams = yield crud.fetch(engine, families.c.surname == u'James')
         self.assertEqual(fams[0]['location'], 'middle earth')
 
 
@@ -354,9 +354,9 @@ class CrudTest(TestCase):
         Only writeable fields are writeable.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families, writeable=['surname']))
+        crud = Crud(Policy(families, writeable=['surname']))
 
-        exc = self.failureResultOf(crud.update({'location':'foo'})).value
+        exc = self.failureResultOf(crud.update(engine, {'location':'foo'})).value
         self.assertTrue(isinstance(exc, NotEditable))
 
 
@@ -367,10 +367,10 @@ class CrudTest(TestCase):
         it shouldn't be writeable.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families, writeable=['surname']))
+        crud = Crud(Policy(families, writeable=['surname']))
         crud = crud.fix({'location': '10'})
 
-        exc = self.failureResultOf(crud.update({'location':'foo'})).value
+        exc = self.failureResultOf(crud.update(engine, {'location':'foo'})).value
         self.assertTrue(isinstance(exc, NotEditable))
 
 
@@ -380,10 +380,10 @@ class CrudTest(TestCase):
         You can delete sets of things.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
-        yield crud.create({'surname': 'Jones'})
-        yield crud.delete()
-        fams = yield crud.fetch()
+        crud = Crud(Policy(families))
+        yield crud.create(engine, {'surname': 'Jones'})
+        yield crud.delete(engine)
+        fams = yield crud.fetch(engine, )
         self.assertEqual(len(fams), 0)
 
 
@@ -393,13 +393,13 @@ class CrudTest(TestCase):
         The fixed variables influence what is deleted.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
-        yield crud.create({'surname': 'Jones'})
+        crud = Crud(Policy(families))
+        yield crud.create(engine, {'surname': 'Jones'})
         crud2 = crud.fix({'surname': 'Arnold'})
-        yield crud2.create({})
-        yield crud2.delete()
+        yield crud2.create(engine, {})
+        yield crud2.delete(engine)
 
-        fams = yield crud.fetch()
+        fams = yield crud.fetch(engine, )
         self.assertEqual(len(fams), 1, "Should have only deleted the fixed")
         self.assertEqual(fams[0]['surname'], 'Jones')
 
@@ -410,12 +410,12 @@ class CrudTest(TestCase):
         You can filter by expression.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
-        yield crud.create({'surname': 'Jones'})
-        yield crud.create({'surname': 'Arnold'})
-        yield crud.delete(families.c.surname == 'Arnold')
+        crud = Crud(Policy(families))
+        yield crud.create(engine, {'surname': 'Jones'})
+        yield crud.create(engine, {'surname': 'Arnold'})
+        yield crud.delete(engine, families.c.surname == 'Arnold')
 
-        fams = yield crud.fetch()
+        fams = yield crud.fetch(engine, )
         self.assertEqual(len(fams), 1, "Should have deleted Arnold")
 
 
@@ -426,12 +426,12 @@ class CrudTest(TestCase):
         if there is no row.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(people), references=[
+        crud = Crud(Policy(people), references=[
             ('family', Policy(families), people.c.family_id == families.c.id),
         ])
 
-        yield crud.create({'name': 'Sam'})
-        peeps = yield crud.fetch()
+        yield crud.create(engine, {'name': 'Sam'})
+        peeps = yield crud.fetch(engine, )
         self.assertEqual(len(peeps), 1)
         sam = peeps[0]
         self.assertEqual(sam['family'], None, str(sam))
@@ -444,13 +444,13 @@ class CrudTest(TestCase):
         You can nest objects by reference.
         """
         engine = yield self.engine()
-        fam_crud = Crud(engine, Policy(families))
-        family = yield fam_crud.create({'surname': 'Jones'})
+        fam_crud = Crud(Policy(families))
+        family = yield fam_crud.create(engine, {'surname': 'Jones'})
 
-        crud = Crud(engine, Policy(people), references=[
+        crud = Crud(Policy(people), references=[
             ('family', Policy(families), people.c.family_id == families.c.id),
         ])
-        sam = yield crud.create({'name': 'Sam', 'family_id': family['id']})
+        sam = yield crud.create(engine, {'name': 'Sam', 'family_id': family['id']})
         self.assertEqual(sam['family'], family)
 
 
@@ -460,20 +460,20 @@ class CrudTest(TestCase):
         You can have multiple references.
         """
         engine = yield self.engine()
-        fam_crud = Crud(engine, Policy(families))
-        johnson = yield fam_crud.create({'surname': 'Johnson'})
+        fam_crud = Crud(Policy(families))
+        johnson = yield fam_crud.create(engine, {'surname': 'Johnson'})
 
-        person_crud = Crud(engine, Policy(people))
-        john = yield person_crud.create({
+        person_crud = Crud(Policy(people))
+        john = yield person_crud.create(engine, {
             'family_id': johnson['id'],
             'name': 'John',
         })
 
-        pets_crud = Crud(engine, Policy(pets), references=[
+        pets_crud = Crud(Policy(pets), references=[
             ('family', Policy(families), pets.c.family_id == families.c.id),
             ('owner', Policy(people), pets.c.owner_id == people.c.id),
         ])
-        cat = yield pets_crud.create({
+        cat = yield pets_crud.create(engine, {
             'family_id': johnson['id'],
             'name': 'cat',
             'owner_id': john['id'],
@@ -482,7 +482,7 @@ class CrudTest(TestCase):
         self.assertEqual(cat['family'], johnson)
         self.assertEqual(cat['owner'], john)
 
-        dog = yield pets_crud.create({
+        dog = yield pets_crud.create(engine, {
             'name': 'dog',
             'owner_id': john['id']
         })
@@ -490,7 +490,7 @@ class CrudTest(TestCase):
         self.assertEqual(dog['owner'], john)
         self.assertEqual(dog['family'], None)
 
-        fish = yield pets_crud.create({
+        fish = yield pets_crud.create(engine, {
             'name': 'bob',
             'family_id': johnson['id'],
         })
@@ -503,7 +503,7 @@ class CrudTest(TestCase):
         """
         Fixed cruds should retain their references.
         """
-        crud = Crud(None,
+        crud = Crud(
             Policy(pets), references=[
             ('family', Policy(families), pets.c.family_id == families.c.id),
         ])
@@ -517,14 +517,14 @@ class CrudTest(TestCase):
         You can expose the table names as an attribute.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families), table_attr='_object')
-        r = yield crud.create({'surname': 'Jones'})
+        crud = Crud(Policy(families), table_attr='_object')
+        r = yield crud.create(engine, {'surname': 'Jones'})
         self.assertEqual(r['_object'], 'family')
         
-        rlist = yield crud.fetch()
+        rlist = yield crud.fetch(engine)
         self.assertEqual(rlist[0]['_object'], 'family')
 
-        rlist = yield crud.update({'surname': 'Jamison'})
+        rlist = yield crud.update(engine, {'surname': 'Jamison'})
         self.assertEqual(rlist[0]['_object'], 'family')
 
 
@@ -534,13 +534,13 @@ class CrudTest(TestCase):
         table attr works with references, too.
         """
         engine = yield self.engine()
-        fam_crud = Crud(engine, Policy(families))
-        family = yield fam_crud.create({'surname': 'Jones'})
+        fam_crud = Crud(Policy(families))
+        family = yield fam_crud.create(engine, {'surname': 'Jones'})
 
-        crud = Crud(engine, Policy(people), table_attr='foo', references=[
+        crud = Crud(Policy(people), table_attr='foo', references=[
             ('family', Policy(families), people.c.family_id == families.c.id),
         ])
-        sam = yield crud.create({'name': 'Sam', 'family_id': family['id']})
+        sam = yield crud.create(engine, {'name': 'Sam', 'family_id': family['id']})
         self.assertEqual(sam['foo'], 'people')
         self.assertEqual(sam['family']['foo'], 'family')
 
@@ -551,11 +551,10 @@ class CrudTest(TestCase):
         You can map table names to something else.
         """
         engine = yield self.engine()
-        fam_crud = Crud(engine, Policy(families))
-        family = yield fam_crud.create({'surname': 'Jones'})
+        fam_crud = Crud(Policy(families))
+        family = yield fam_crud.create(engine, {'surname': 'Jones'})
 
         crud = Crud(
-            engine,
             Policy(people),
             table_attr='foo',
             table_map={
@@ -565,7 +564,7 @@ class CrudTest(TestCase):
             references=[
             ('family', Policy(families), people.c.family_id == families.c.id),
         ])
-        sam = yield crud.create({'name': 'Sam', 'family_id': family['id']})
+        sam = yield crud.create(engine, {'name': 'Sam', 'family_id': family['id']})
         self.assertEqual(sam['foo'], 'Person')
         self.assertEqual(sam['family']['foo'], 'Aardvark')
 
@@ -574,7 +573,7 @@ class CrudTest(TestCase):
         """
         Fixed Cruds should retain the table_attr and map.
         """
-        crud = Crud(None,
+        crud = Crud(
             Policy(families),
             table_attr='foo',
             table_map={'foo': 'bar'},
@@ -697,17 +696,17 @@ class PaginatorTest(TestCase):
         You can paginate a Crud
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(pets))
+        crud = Crud(Policy(pets))
         pager = Paginator(crud, page_size=10, order=pets.c.id)
 
         monkeys = []
         for i in xrange(40):
-            monkey = yield crud.create({'name': 'seamonkey %d' % (i,)})
+            monkey = yield crud.create(engine, {'name': 'seamonkey %d' % (i,)})
             monkeys.append(monkey)
 
-        page1 = yield pager.page(0)
+        page1 = yield pager.page(engine, 0)
         self.assertEqual(page1, monkeys[:10])
-        page2 = yield pager.page(1)
+        page2 = yield pager.page(engine, 1)
         self.assertEqual(page2, monkeys[10:20])
 
 
@@ -717,7 +716,7 @@ class PaginatorTest(TestCase):
         You can paginate filtered results, too
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(pets))
+        crud = Crud(Policy(pets))
         pager = Paginator(crud, page_size=3, order=pets.c.id)
 
         things = []
@@ -729,12 +728,12 @@ class PaginatorTest(TestCase):
             {'name': 'dog'},
         ]
         for thing in _things:
-            t = yield crud.create(thing)
+            t = yield crud.create(engine, thing)
             things.append(t)
 
-        page1 = yield pager.page(0, pets.c.name.startswith('thing'))
+        page1 = yield pager.page(engine, 0, pets.c.name.startswith('thing'))
         self.assertEqual(page1, [things[0], things[1]])
-        count = yield pager.pageCount(pets.c.name.startswith('thing'))
+        count = yield pager.pageCount(engine, pets.c.name.startswith('thing'))
         self.assertEqual(count, 1)
 
 
@@ -744,15 +743,15 @@ class PaginatorTest(TestCase):
         You can count the pages
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(pets))
+        crud = Crud(Policy(pets))
         pager = Paginator(crud, page_size=10, order=pets.c.id)
 
         monkeys = []
         for i in xrange(43):
-            monkey = yield crud.create({'name': 'seamonkey %d' % (i,)})
+            monkey = yield crud.create(engine, {'name': 'seamonkey %d' % (i,)})
             monkeys.append(monkey)
 
-        pages = yield pager.pageCount()
+        pages = yield pager.pageCount(engine)
         self.assertEqual(pages, 5)
 
 
