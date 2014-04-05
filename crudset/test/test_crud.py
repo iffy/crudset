@@ -9,7 +9,7 @@ from sqlalchemy.schema import CreateTable
 from sqlalchemy.pool import StaticPool
 
 from crudset.error import MissingRequiredFields, NotEditable
-from crudset.crud import Crud, Policy, Paginator
+from crudset.crud import Crud, Policy, Paginator, Ref
 
 from twisted.python import log
 import logging
@@ -426,9 +426,9 @@ class CrudTest(TestCase):
         if there is no row.
         """
         engine = yield self.engine()
-        crud = Crud(Policy(people), references=[
-            ('family', Policy(families), people.c.family_id == families.c.id),
-        ])
+        crud = Crud(Policy(people, references=[
+            Ref('family', Policy(families), people.c.family_id == families.c.id),
+        ]))
 
         yield crud.create(engine, {'name': 'Sam'})
         peeps = yield crud.fetch(engine, )
@@ -447,9 +447,9 @@ class CrudTest(TestCase):
         fam_crud = Crud(Policy(families))
         family = yield fam_crud.create(engine, {'surname': 'Jones'})
 
-        crud = Crud(Policy(people), references=[
-            ('family', Policy(families), people.c.family_id == families.c.id),
-        ])
+        crud = Crud(Policy(people, references=[
+            Ref('family', Policy(families), people.c.family_id == families.c.id),
+        ]))
         sam = yield crud.create(engine, {'name': 'Sam', 'family_id': family['id']})
         self.assertEqual(sam['family'], family)
 
@@ -469,10 +469,10 @@ class CrudTest(TestCase):
             'name': 'John',
         })
 
-        pets_crud = Crud(Policy(pets), references=[
-            ('family', Policy(families), pets.c.family_id == families.c.id),
-            ('owner', Policy(people), pets.c.owner_id == people.c.id),
-        ])
+        pets_crud = Crud(Policy(pets, references=[
+            Ref('family', Policy(families), pets.c.family_id == families.c.id),
+            Ref('owner', Policy(people), pets.c.owner_id == people.c.id),
+        ]))
         cat = yield pets_crud.create(engine, {
             'family_id': johnson['id'],
             'name': 'cat',
@@ -497,18 +497,6 @@ class CrudTest(TestCase):
         self.assertEqual(fish['name'], 'bob')
         self.assertEqual(fish['owner'], None)
         self.assertEqual(fish['family'], johnson)
-
-
-    def test_references_fix(self):
-        """
-        Fixed cruds should retain their references.
-        """
-        crud = Crud(
-            Policy(pets), references=[
-            ('family', Policy(families), pets.c.family_id == families.c.id),
-        ])
-        fixed = crud.fix({'id': 12})
-        self.assertEqual(crud.references, fixed.references)
 
 
     @defer.inlineCallbacks
@@ -537,9 +525,9 @@ class CrudTest(TestCase):
         fam_crud = Crud(Policy(families))
         family = yield fam_crud.create(engine, {'surname': 'Jones'})
 
-        crud = Crud(Policy(people), table_attr='foo', references=[
-            ('family', Policy(families), people.c.family_id == families.c.id),
-        ])
+        crud = Crud(Policy(people, references=[
+            Ref('family', Policy(families), people.c.family_id == families.c.id),
+        ]), table_attr='foo')
         sam = yield crud.create(engine, {'name': 'Sam', 'family_id': family['id']})
         self.assertEqual(sam['foo'], 'people')
         self.assertEqual(sam['family']['foo'], 'family')
@@ -555,15 +543,15 @@ class CrudTest(TestCase):
         family = yield fam_crud.create(engine, {'surname': 'Jones'})
 
         crud = Crud(
-            Policy(people),
+            Policy(people, references=[
+                Ref('family', Policy(families), people.c.family_id == families.c.id),
+            ]),
             table_attr='foo',
             table_map={
                 people: 'Person',
                 families: 'Aardvark',
             },
-            references=[
-            ('family', Policy(families), people.c.family_id == families.c.id),
-        ])
+        )
         sam = yield crud.create(engine, {'name': 'Sam', 'family_id': family['id']})
         self.assertEqual(sam['foo'], 'Person')
         self.assertEqual(sam['family']['foo'], 'Aardvark')
@@ -588,13 +576,12 @@ class CrudTest(TestCase):
         You can change the policy of the crud.
         """
         pol1 = Policy(families)
-        crud = Crud(pol1, references=[1,2,3],
+        crud = Crud(pol1,
                     table_attr='foo', table_map={'a': 'b'}).fix({'id':10})
 
         pol2 = Policy(pets)
-        crud2 = crud.withPolicy(pol2, [4,5,6])
+        crud2 = crud.withPolicy(pol2)
         self.assertEqual(crud2.policy, pol2)
-        self.assertEqual(crud2.references, [4,5,6])
         self.assertEqual(crud2.table_attr, 'foo')
         self.assertEqual(crud2.table_map, {'a': 'b'})
         self.assertEqual(crud2._fixed, {'id': 10})
@@ -652,6 +639,15 @@ class PolicyTest(TestCase):
         narrowed = base.narrow(also_required=['location'])
         self.assertEqual(narrowed.required, set(['surname', 'location']),
                          "Required should be a union of fields")
+
+
+    def test_narrow_references(self):
+        """
+        References should be maintained.
+        """
+        base = Policy(families, references=[Ref('pets', None, None)])
+        narrowed = base.narrow()
+        self.assertEqual(narrowed.references, base.references)
 
 
     def test_narrow_default(self):

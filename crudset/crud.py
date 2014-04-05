@@ -6,12 +6,24 @@ from crudset.error import MissingRequiredFields, NotEditable
 
 
 
+class Ref(object):
+    """
+    A reference to another object (single object) for use within a L{Policy}.
+    """
+
+    def __init__(self, attr_name, policy, join):
+        self.attr_name = attr_name
+        self.policy = policy
+        self.join = join
+
+
 class Policy(object):
     """
     I am a read-write policy for a table's attributes.
     """
 
-    def __init__(self, table, required=None, writeable=None, readable=None):
+    def __init__(self, table, required=None, writeable=None, readable=None,
+                 references=None):
         """
         @param required: List of required field names.
 
@@ -20,9 +32,12 @@ class Policy(object):
         
         @param readable: List of readable fields.  If C{None} then all
             fields are readable.
+
+        @param references: List of L{Ref} objects.
         """
         self.table = table
         self.required = frozenset(required or [])
+        self.references = references or []
         
         # readable
         if readable is None:
@@ -79,7 +94,8 @@ class Policy(object):
             self.table,
             required=required,
             writeable=writeable,
-            readable=readable)
+            readable=readable,
+            references=self.references)
 
 
 
@@ -92,13 +108,9 @@ class Crud(object):
     attributes fixed (unchangeable by the user).
     """
 
-    def __init__(self, policy, references=[], table_attr=None,
-                 table_map=None):
+    def __init__(self, policy, table_attr=None, table_map=None):
         """
         @param policy: A L{Policy} instance.
-
-        @param references: A list of tuples with 3 things:
-            (attr_name, policy, join_on constraint)
 
         @param table_attr: If set, then the data dictionaries returned by my
             methods will contain an item with C{table_attr} key and SQL table
@@ -108,7 +120,6 @@ class Crud(object):
             map table names to something else.
         """
         self.policy = policy
-        self.references = references
         self.table_attr = table_attr
         self.table_map = table_map or {}
         self._fixed = {}
@@ -124,18 +135,18 @@ class Crud(object):
 
         @return: A new L{Crud}.
         """
-        crud = Crud(self.policy, self.references, self.table_attr,
+        crud = Crud(self.policy, self.table_attr,
                     self.table_map)
         crud._fixed = self._fixed.copy()
         crud._fixed.update(attrs)
         return crud
 
 
-    def withPolicy(self, policy, references=None):
+    def withPolicy(self, policy):
         """
-        Create a new crud with a different policy and references.
+        Create a new crud with a different policy.
         """
-        crud = Crud(policy, references, self.table_attr, self.table_map)
+        crud = Crud(policy, self.table_attr, self.table_map)
         crud._fixed = self._fixed.copy()
         return crud
 
@@ -260,11 +271,11 @@ class Crud(object):
     def _generateBaseQueryAndColumns(self):
         columns = [(None,x) for x in self.policy.readable_columns]
         join = None
-        if self.references:
+        if self.policy.references:
             join = self.policy.table
-            for (attr_name, policy, join_on) in self.references:
-                join = join.outerjoin(policy.table, join_on)
-                columns.extend([(attr_name, x) for x in policy.readable_columns])
+            for ref in self.policy.references:
+                join = join.outerjoin(ref.policy.table, ref.join)
+                columns.extend([(ref.attr_name, x) for x in ref.policy.readable_columns])
         
         base = select([x[1] for x in columns])
         if join is not None:
