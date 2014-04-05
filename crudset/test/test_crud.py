@@ -768,6 +768,33 @@ class PaginatorTest(TestCase):
         self.assertEqual(pages, 5)
 
 
+    @defer.inlineCallbacks
+    def test_pageCountForills(self):
+        """
+        The page count should be accurate for all numbers.
+        """
+        engine = yield self.engine()
+        crud = Crud(Policy(pets))
+        pager = Paginator(crud, page_size=3, order=pets.c.id)
+        
+        count = yield pager.pageCount(engine)
+        self.assertEqual(count, 0, "no records, no pages")
+
+        yield crud.create(engine, {})
+        count = yield pager.pageCount(engine)
+        self.assertEqual(count, 1, "1 record, 1 page")
+
+        yield crud.create(engine, {})
+        yield crud.create(engine, {})
+        count = yield pager.pageCount(engine)
+        self.assertEqual(count, 1, "3 records, 1 page")
+
+        yield crud.create(engine, {})
+        count = yield pager.pageCount(engine)
+        self.assertEqual(count, 2, "4 records, 2 pages")
+
+
+
 
 
 

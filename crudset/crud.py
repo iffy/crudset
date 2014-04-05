@@ -277,7 +277,7 @@ class Crud(object):
                 join = join.outerjoin(ref.policy.table, ref.join)
                 columns.extend([(ref.attr_name, x) for x in ref.policy.readable_columns])
         
-        base = select([x[1] for x in columns])
+        base = select([x[1] for x in columns], use_labels=True)
         if join is not None:
             base = base.select_from(join)
         base = self._applyConstraints(base)
@@ -380,9 +380,10 @@ class Paginator(object):
         Return the total number of pages in the set.
         """
         count = yield self.crud.count(engine, where=where)
-        pages = count / self.page_size
-        if self.page_size % count:
-            pages += 1
+        if count == 0:
+            defer.returnValue(0)
+
+        pages = ((count - 1) / self.page_size) + 1
         defer.returnValue(pages)
 
 
