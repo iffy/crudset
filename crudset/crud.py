@@ -2,7 +2,7 @@ from twisted.internet import defer
 
 from sqlalchemy.sql import select
 
-from crudset.error import MissingRequiredFields, NotEditable
+from crudset.error import MissingRequiredFields, NotEditable, TooMany
 
 
 
@@ -201,6 +201,21 @@ class Crud(object):
         for row in rows:
             ret.append(self._rowToDict(row))
         defer.returnValue(ret)
+
+
+    @defer.inlineCallbacks
+    def getOne(self, engine, where=None):
+        """
+        Get one record or fail trying.
+
+        @param where: Where clause.
+        """
+        rows = yield self.fetch(engine, where, limit=2)
+        if len(rows) > 1:
+            raise TooMany("Expecting one and found more than that")
+        elif not rows:
+            defer.returnValue(None)
+        defer.returnValue(rows[0])
 
 
     @defer.inlineCallbacks

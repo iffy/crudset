@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, ForeignKey
 from sqlalchemy.schema import CreateTable
 from sqlalchemy.pool import StaticPool
 
-from crudset.error import MissingRequiredFields, NotEditable
+from crudset.error import MissingRequiredFields, NotEditable, TooMany
 from crudset.crud import Crud, Policy, Paginator, Ref
 
 from twisted.python import log
@@ -249,6 +249,54 @@ class CrudTest(TestCase):
 
         results = yield crud.fetch(engine, limit=5, offset=2, order=families.c.surname)
         self.assertEqual(results, fams[2:2+5])
+
+
+    @defer.inlineCallbacks
+    def test_getOne(self):
+        """
+        You can get just one item.
+        """
+        engine = yield self.engine()
+        crud = Crud(Policy(families))
+        fam = yield crud.create(engine, {'surname': 'hey'})
+        one = yield crud.getOne(engine)
+        self.assertEqual(one, fam)
+
+
+    @defer.inlineCallbacks
+    def test_getOne_where(self):
+        """
+        You can get one by a where clause
+        """
+        engine = yield self.engine()
+        crud = Crud(Policy(families))
+        fam1 = yield crud.create(engine, {'surname': 'bob'})
+        yield crud.create(engine, {'surname': 'Jones'})
+        one = yield crud.getOne(engine, families.c.surname == 'bob')
+        self.assertEqual(one, fam1)
+
+
+    @defer.inlineCallbacks
+    def test_getOne_moreThanOne(self):
+        """
+        If getOne returns more than one, it's an exception.
+        """
+        engine = yield self.engine()
+        crud = Crud(Policy(families))
+        yield crud.create(engine, {'surname': 'bob'})
+        yield crud.create(engine, {'surname': 'Jones'})
+        self.assertFailure(crud.getOne(engine), TooMany)
+
+
+    @defer.inlineCallbacks
+    def test_getOne_None(self):
+        """
+        If there is no result, return None.
+        """
+        engine = yield self.engine()
+        crud = Crud(Policy(families))
+        one = yield crud.getOne(engine)
+        self.assertEqual(one, None)
 
 
     @defer.inlineCallbacks
