@@ -228,7 +228,7 @@ class Crud(object):
         if where is not None:
             query = query.where(where)
 
-        result = yield engine.execute(query.count())
+        result = yield engine.execute(query.alias().count())
         rows = yield result.fetchone()
         defer.returnValue(rows[0])
 
