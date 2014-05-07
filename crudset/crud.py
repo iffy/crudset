@@ -1,6 +1,6 @@
 from twisted.internet import defer
 
-from sqlalchemy.sql import select
+from sqlalchemy.sql import select, and_
 
 from crudset.error import MissingRequiredFields, NotEditable, TooMany
 
@@ -305,8 +305,8 @@ class Crud(object):
             for k, v in self._fixed.items():
                 col = getattr(self.policy.table.c, k)
                 comp = col == v
-                if where:
-                    where = where and comp
+                if where is not None:
+                    where = and_(where, comp)
                 else:
                     where = comp
             query = query.where(where)
