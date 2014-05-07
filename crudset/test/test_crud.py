@@ -328,6 +328,35 @@ class CrudTest(TestCase):
 
 
     @defer.inlineCallbacks
+    def test_update_allFixed(self):
+        """
+        All the fixed attributes should be taken into consideration.
+        """
+        engine = yield self.engine()
+        crud = Crud(engine, Policy(families))
+        yield crud.create({'surname': 'Jones', 'location': 'anvilania'})
+        yield crud.create({'surname': 'James', 'location': 'gotham'})
+        yield crud.create({'surname': 'Jones', 'location': 'gotham'})
+        yield crud.create({'surname': 'James', 'location': 'anvilania'})
+
+        crud2 = crud.fix({'surname': 'James', 'location': 'gotham'})
+        yield crud2.update({'location': 'middle earth'})
+
+        fams = yield crud.fetch()
+        actual = set()
+        for fam in fams:
+            actual.add((fam['surname'], fam['location']))
+
+        expected = set([
+            ('Jones', 'anvilania'),
+            ('James', 'middle earth'),
+            ('Jones', 'gotham'),
+            ('James', 'anvilania'),
+        ])
+        self.assertEqual(actual, expected, "Should only change the one thing")
+
+
+    @defer.inlineCallbacks
     def test_update_expression(self):
         """
         You can filter the update by expression, too.
