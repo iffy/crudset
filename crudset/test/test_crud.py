@@ -9,7 +9,7 @@ from sqlalchemy.schema import CreateTable
 from sqlalchemy.pool import StaticPool
 
 from crudset.error import MissingRequiredFields, NotEditable, TooMany
-from crudset.crud import Crud, Policy, Paginator, Ref
+from crudset.crud import Crud, Policy, Paginator, Ref, Sanitizer
 
 from twisted.python import log
 import logging
@@ -869,6 +869,173 @@ class PaginatorTest(TestCase):
         yield crud.create(engine, {})
         count = yield pager.pageCount(engine)
         self.assertEqual(count, 2, "4 records, 2 pages")
+
+
+
+class SanitizerTest(TestCase):
+
+
+    @defer.inlineCallbacks
+    def test_default(self):
+        """
+        An empty sanitizer will allow any column to be updated and strip out
+        unknown fields.
+        """
+        class Foo(object):
+            sanitizer = Sanitizer(pets)
+        sanitizer = Foo().sanitizer
+        
+        data = {'foo': 'bar', 'id': 12, 'family_id': 19, 'owner_id': -1,
+                'name': 'bob'}
+        output = yield sanitizer.sanitize('engine', 'update', data)
+        self.assertEqual(output,
+            {'id': 12, 'family_id': 19, 'owner_id': -1, 'name': 'bob'})
+
+
+    @defer.inlineCallbacks
+    def test_writeable(self):
+        """
+        You can specify a list of writeable fields.  Non-writeable fields will
+        be removed from the sanitized data.
+        """
+        class Foo(object):
+            sanitizer = Sanitizer(pets, writeable=['name'])
+        sanitizer = Foo().sanitizer
+        
+        data = {'foo': 'bar', 'id': 12, 'family_id': 19, 'owner_id': -1,
+                'name': 'bob'}
+        output = yield sanitizer.sanitize('engine', 'update', data)
+        self.assertEqual(output, {'name': 'bob'})
+
+
+    @defer.inlineCallbacks
+    def test_sanitizeData(self):
+        """
+        You can specify a function that will sanitize the whole piece of data.
+        """
+        called = {}
+        class Foo(object):
+            sanitizer = Sanitizer(pets)
+
+            @sanitizer.sanitizeData
+            def myFunc(self, engine, action, data, context):
+                called['engine'] = engine
+                called['action'] = action
+                called['data'] = data
+                called['context'] = context
+                return {'name': 'john'}
+
+        sanitizer = Foo().sanitizer
+
+        indata = {
+            'foo': 'bar',
+            'name': 'bob',
+        }
+        output = yield sanitizer.sanitize('engine', 'update', indata)
+        self.assertEqual(output, {'name': 'john'})
+        self.assertEqual(called['engine'], 'engine')
+        self.assertEqual(called['action'], 'update')
+        self.assertEqual(called['data'], indata)
+        self.assertEqual(called['context'], {})
+
+
+    @defer.inlineCallbacks
+    def test_sanitizeField(self):
+        """
+        You can sanitize individual fields.
+        """
+        called = {}
+        class Foo(object):
+            sanitizer = Sanitizer(pets)
+
+            @sanitizer.sanitizeField('name')
+            def name(self, engine, action, data, field, context):
+                called['engine'] = engine
+                called['action'] = action
+                called['data'] = data.copy()
+                called['field'] = field
+                called['context'] = context
+                return 'new name'
+
+        sanitizer = Foo().sanitizer
+
+        indata = {'name': 'sam'}
+        output = yield sanitizer.sanitize('engine', 'update', indata)
+        self.assertEqual(output, {'name': 'new name'})
+        self.assertEqual(called['engine'], 'engine')
+        self.assertEqual(called['action'], 'update')
+        self.assertEqual(called['data'], {'name': 'sam'})
+        self.assertEqual(called['field'], 'name')
+        self.assertEqual(called['context'], {})
+
+
+    @defer.inlineCallbacks
+    def test_sanitizeField_order(self):
+        """
+        Fields are sanitized in the order added.
+        """
+        called = []
+        class Foo(object):
+            sanitizer = Sanitizer(pets)
+
+            @sanitizer.sanitizeField('name')
+            def name(self, engine, action, data, field, context):
+                called.append('name')
+                return data[field]
+
+            @sanitizer.sanitizeField('family_id')
+            def family_id(self, engine, action, data, field, context):
+                called.append('family_id')
+                return data[field]
+
+        sanitizer = Foo().sanitizer
+
+        indata = {'name': 'sam', 'family_id': 12}
+        output = yield sanitizer.sanitize('engine', 'update', indata)
+        self.assertEqual(output, {'name': 'sam', 'family_id': 12})
+        self.assertEqual(called, ['name', 'family_id'], "Should be called "
+                         "in the order added")
+
+
+    @defer.inlineCallbacks
+    def test_sanitizeField_onlyCalledIfPresent(self):
+        """
+        The sanitizeField sanitizers should only be called if the field is
+        present in the update/create data.
+        """
+        called = []
+        class Foo(object):
+            sanitizer = Sanitizer(pets)
+
+            @sanitizer.sanitizeField('name')
+            def name(self, engine, action, data, field, context):
+                called.append('name')
+                return data[field]
+
+        sanitizer = Foo().sanitizer
+
+        indata = {'family_id': 12}
+        output = yield sanitizer.sanitize('engine', 'update', indata)
+        self.assertEqual(output, {'family_id': 12})
+        self.assertEqual(called, [], "Should not call name validator since "
+                         "name wasn't present")
+
+
+    def test_getSanitizedFields(self):
+        """
+        You can list the fields that are being sanitized.
+        """
+        class Foo(object):
+            sanitizer = Sanitizer(pets)
+
+            @sanitizer.sanitizeField('name')
+            def name(self, engine, action, data, field, context):
+                pass
+
+        self.assertEqual(Foo.sanitizer.getSanitizedFields(), ['name'])
+
+
+
 
 
 

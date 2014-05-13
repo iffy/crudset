@@ -1,4 +1,5 @@
 from twisted.internet import defer
+from functools import wraps, partial
 
 from sqlalchemy.sql import select, and_
 
@@ -96,6 +97,102 @@ class Policy(object):
             writeable=writeable,
             readable=readable,
             references=self.references)
+
+
+
+class Sanitizer(object):
+
+
+    def __init__(self, table, writeable=None):
+        self.table = table
+        self._sanitizers = []
+        self._sanitized_fields = []
+        self._post_sanitizers = [self._filterToWriteable]
+        if writeable is None:
+            self.writeable_columns = frozenset([x.name for x in table.columns])
+        else:
+            self.writeable_columns = frozenset(writeable)
+
+    def __get__(self, instance, cls):
+        if instance is None:
+            return self
+        return _BoundSanitizer(self, instance)
+
+
+    def sanitizeMethods(self):
+        """
+        Return a list of methods to be used to sanitize data.
+        """
+        return self._sanitizers + self._post_sanitizers
+
+
+    def getSanitizedFields(self):
+        """
+        List fields being sanitized.  This could be helpful to statically(ish)
+        check that all fields are being sanitized.
+        """
+        return self._sanitized_fields
+
+
+    def sanitizeData(self, func):
+        """
+        Add a sanitization function for the whole blob of data.
+        """
+        self._sanitizers.append(func)
+        return func
+
+
+    def sanitizeField(self, field):
+        """
+        Add a sanitization function for a specific named field.  This is a
+        more specific version of the general L{sanitizeData} method.
+        """
+        def deco(func):
+            self._sanitizers.append(self._fieldSanitizer(func, field))
+            self._sanitized_fields.append(field)
+            return func
+        return deco
+
+
+    def _fieldSanitizer(self, func, field):
+        @defer.inlineCallbacks
+        def _sanitizer(instance, engine, action, data, context):
+            if field not in data:
+                defer.returnValue(data)
+            else:
+                output = yield func(instance, engine, action, data, field, context)
+                data[field] = output
+                defer.returnValue(data)
+        return _sanitizer
+
+
+    def _filterToWriteable(self, instance, engine, action, data, context):
+        """
+        Filter all the columns out of C{data} that aren't marked writeable.
+        """
+        result = {}
+        for k, v in data.items():
+            if k in self.writeable_columns:
+                result[k] = v
+        return result
+
+
+
+class _BoundSanitizer(object):
+
+
+    def __init__(self, sanitizer, instance):
+        self.sanitizer = sanitizer
+        self.instance = instance
+
+
+    @defer.inlineCallbacks
+    def sanitize(self, engine, action, data):
+        context = {}
+        result = data
+        for func in self.sanitizer.sanitizeMethods():
+            result = yield func(self.instance, engine, action, result, context)
+        defer.returnValue(result)
 
 
 
