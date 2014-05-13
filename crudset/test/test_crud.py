@@ -381,16 +381,16 @@ class CrudTest(TestCase):
         All the fixed attributes should be taken into consideration.
         """
         engine = yield self.engine()
-        crud = Crud(engine, Policy(families))
-        yield crud.create({'surname': 'Jones', 'location': 'anvilania'})
-        yield crud.create({'surname': 'James', 'location': 'gotham'})
-        yield crud.create({'surname': 'Jones', 'location': 'gotham'})
-        yield crud.create({'surname': 'James', 'location': 'anvilania'})
+        crud = Crud(Policy(families))
+        yield crud.create(engine, {'surname': 'Jones', 'location': 'anvilania'})
+        yield crud.create(engine, {'surname': 'James', 'location': 'gotham'})
+        yield crud.create(engine, {'surname': 'Jones', 'location': 'gotham'})
+        yield crud.create(engine, {'surname': 'James', 'location': 'anvilania'})
 
         crud2 = crud.fix({'surname': 'James', 'location': 'gotham'})
-        yield crud2.update({'location': 'middle earth'})
+        yield crud2.update(engine, {'location': 'middle earth'})
 
-        fams = yield crud.fetch()
+        fams = yield crud.fetch(engine)
         actual = set()
         for fam in fams:
             actual.add((fam['surname'], fam['location']))
