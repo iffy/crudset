@@ -17,6 +17,18 @@ class Ref(object):
 
 
 
+class SanitizationContext(object):
+    """
+    A context for sanitizers to get more information about how to sanitize.
+    """
+
+    def __init__(self, sanitizer, engine, action, query):
+        self.sanitizer = sanitizer
+        self.engine = engine
+        self.action = action
+        self.query = query
+
+
 class Readset(object):
     """
     A description of the fields an references that are returned from
@@ -94,27 +106,27 @@ class Sanitizer(object):
 
 
     @defer.inlineCallbacks
-    def sanitize(self, engine, action, data, instance=None):
-        context = {}
+    def sanitize(self, engine, action, query, data, instance=None):
+        context = SanitizationContext(self, engine, action, query)
         result = data
         for func in self.sanitizeMethods():
-            result = yield func(instance, engine, action, result, context)
+            result = yield func(instance, context, result)
         defer.returnValue(result)
 
 
     def _fieldSanitizer(self, func, field):
         @defer.inlineCallbacks
-        def _sanitizer(instance, engine, action, data, context):
+        def _sanitizer(instance, context, data):
             if field not in data:
                 defer.returnValue(data)
             else:
-                output = yield func(instance, engine, action, data, field, context)
+                output = yield func(instance, context, data, field)
                 data[field] = output
                 defer.returnValue(data)
         return _sanitizer
 
 
-    def _filterToWriteable(self, instance, engine, action, data, context):
+    def _filterToWriteable(self, instance, context, data):
         """
         Filter all the columns out of C{data} that aren't marked writeable.
         """
@@ -134,8 +146,9 @@ class _BoundSanitizer(object):
         self.instance = instance
 
 
-    def sanitize(self, engine, action, data):
-        return self.sanitizer.sanitize(engine, action, data, self.instance)        
+    def sanitize(self, engine, action, query, data):
+        return self.sanitizer.sanitize(engine, action, query, data,
+                                       self.instance)        
 
 
     @property
@@ -202,7 +215,8 @@ class Crud(object):
         attrs.update(self._fixed)
 
         # sanitize
-        sanitized = yield self.sanitizer.sanitize(engine, 'create', attrs)
+        sanitized = yield self.sanitizer.sanitize(
+            engine, 'create', None, attrs)
 
         # do it
         table = self.sanitizer.table
@@ -217,17 +231,19 @@ class Crud(object):
         """
         Update a set of records.
         """
-        up = self.sanitizer.table.update()
-        up = self._applyConstraints(up)
+        up = self._applyConstraints(self.sanitizer.table.update())
 
         # you can't update fixed attributes
         for attr in self._fixed:
             attrs.pop(attr, None)
 
-        sanitized = yield self.sanitizer.sanitize(engine, 'update', attrs)
-
+        query = self._applyConstraints(self.sanitizer.table.select())
         if where is not None:
             up = up.where(where)
+            query = query.where(where)
+
+        sanitized = yield self.sanitizer.sanitize(
+            engine, 'update', query, attrs)       
 
         if sanitized:
             up = up.values(**sanitized)

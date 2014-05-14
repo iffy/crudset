@@ -103,18 +103,19 @@ class CrudTest(TestCase):
         A policy's sanitizer should be used to sanitize fields.
         """
         engine = yield self.engine()
-        called = []
+        called = {}
         class Foo(object):
             sanitizer = Sanitizer(families)
             @sanitizer.sanitizeData
-            def sani(self, engine, action, data, context):
-                called.append(action)
+            def sani(self, context, data):
+                called['context'] = context
                 return {'surname': 'Jones'}
 
         crud = Crud(Readset(families), Foo().sanitizer)
         family = yield crud.create(engine, {})
         self.assertEqual(family['surname'], 'Jones')
-        self.assertEqual(called, ['create'])
+        self.assertEqual(called['context'].action, 'create')
+        self.assertEqual(called['context'].query, None)
 
 
     @defer.inlineCallbacks
@@ -452,8 +453,8 @@ class CrudTest(TestCase):
         class Foo(object):
             sanitizer = Sanitizer(families)
             @sanitizer.sanitizeData
-            def sani(self, engine, action, data, context):
-                called.append(action)
+            def sani(self, context, data):
+                called.append(context)
                 return {'surname': 'Jones'}
 
         crud = Crud(Readset(families), Foo().sanitizer)
@@ -462,8 +463,37 @@ class CrudTest(TestCase):
         fams = yield crud.update(engine, {'surname': 'Arnold'},
                                  families.c.id==family['id'])
         self.assertEqual(fams[0]['surname'], 'Jones')
-        self.assertEqual(called, ['update'])
+        self.assertEqual(called[0].action, 'update')
+        self.assertEqual(
+            str(called[0].query),
+            str(families.select().where(families.c.id==family['id'])))
 
+
+    @defer.inlineCallbacks
+    def test_update_fixed_sanitizeQuery(self):
+        """
+        Fixed attributes should make their way into the query passed to the
+        sanitizer.
+        """
+        engine = yield self.engine()
+        called = []
+        class Foo(object):
+            sanitizer = Sanitizer(families)
+            @sanitizer.sanitizeData
+            def sani(self, context, data):
+                called.append(context)
+                return data
+
+        crud = Crud(Readset(families), Foo().sanitizer).fix(
+            {'surname': 'Arnold'})
+        yield crud.create(engine, {})
+        called.pop()
+        fams = yield crud.update(engine, {'location': 'Bolivia'})
+        self.assertEqual(fams[0]['location'], 'Bolivia')
+        self.assertEqual(called[0].action, 'update')
+        self.assertEqual(
+            str(called[0].query),
+            str(families.select().where(families.c.surname=='Arnold')))
 
 
     @defer.inlineCallbacks
@@ -823,7 +853,7 @@ class SanitizerTest(TestCase):
         
         data = {'foo': 'bar', 'id': 12, 'family_id': 19, 'owner_id': -1,
                 'name': 'bob'}
-        output = yield sanitizer.sanitize('engine', 'update', data)
+        output = yield sanitizer.sanitize('engine', 'update', 'query', data)
         self.assertEqual(output,
             {'id': 12, 'family_id': 19, 'owner_id': -1, 'name': 'bob'})
 
@@ -840,7 +870,7 @@ class SanitizerTest(TestCase):
         
         data = {'foo': 'bar', 'id': 12, 'family_id': 19, 'owner_id': -1,
                 'name': 'bob'}
-        output = yield sanitizer.sanitize('engine', 'update', data)
+        output = yield sanitizer.sanitize('engine', 'update', 'query', data)
         self.assertEqual(output, {'name': 'bob'})
 
 
@@ -854,11 +884,12 @@ class SanitizerTest(TestCase):
             sanitizer = Sanitizer(pets)
 
             @sanitizer.sanitizeData
-            def myFunc(self, engine, action, data, context):
-                called['engine'] = engine
-                called['action'] = action
+            def myFunc(self, context, data):
+                called['engine'] = context.engine
+                called['action'] = context.action
+                called['sanitizer'] = context.sanitizer
+                called['query'] = context.query
                 called['data'] = data
-                called['context'] = context
                 return {'name': 'john'}
 
         sanitizer = Foo().sanitizer
@@ -867,12 +898,13 @@ class SanitizerTest(TestCase):
             'foo': 'bar',
             'name': 'bob',
         }
-        output = yield sanitizer.sanitize('engine', 'update', indata)
+        output = yield sanitizer.sanitize('engine', 'update', 'query', indata)
         self.assertEqual(output, {'name': 'john'})
         self.assertEqual(called['engine'], 'engine')
         self.assertEqual(called['action'], 'update')
+        self.assertEqual(called['sanitizer'], Foo.sanitizer)
+        self.assertEqual(called['query'], 'query')
         self.assertEqual(called['data'], indata)
-        self.assertEqual(called['context'], {})
 
 
     @defer.inlineCallbacks
@@ -885,24 +917,22 @@ class SanitizerTest(TestCase):
             sanitizer = Sanitizer(pets)
 
             @sanitizer.sanitizeField('name')
-            def name(self, engine, action, data, field, context):
-                called['engine'] = engine
-                called['action'] = action
+            def name(self, context, data, field):
+                called['engine'] = context.engine
+                called['action'] = context.action
                 called['data'] = data.copy()
                 called['field'] = field
-                called['context'] = context
                 return 'new name'
 
         sanitizer = Foo().sanitizer
 
         indata = {'name': 'sam'}
-        output = yield sanitizer.sanitize('engine', 'update', indata)
+        output = yield sanitizer.sanitize('engine', 'update', 'query', indata)
         self.assertEqual(output, {'name': 'new name'})
         self.assertEqual(called['engine'], 'engine')
         self.assertEqual(called['action'], 'update')
         self.assertEqual(called['data'], {'name': 'sam'})
         self.assertEqual(called['field'], 'name')
-        self.assertEqual(called['context'], {})
 
 
     @defer.inlineCallbacks
@@ -915,19 +945,19 @@ class SanitizerTest(TestCase):
             sanitizer = Sanitizer(pets)
 
             @sanitizer.sanitizeField('name')
-            def name(self, engine, action, data, field, context):
+            def name(self, context, data, field):
                 called.append('name')
                 return data[field]
 
             @sanitizer.sanitizeField('family_id')
-            def family_id(self, engine, action, data, field, context):
+            def family_id(self, context, data, field):
                 called.append('family_id')
                 return data[field]
 
         sanitizer = Foo().sanitizer
 
         indata = {'name': 'sam', 'family_id': 12}
-        output = yield sanitizer.sanitize('engine', 'update', indata)
+        output = yield sanitizer.sanitize('engine', 'update', 'query', indata)
         self.assertEqual(output, {'name': 'sam', 'family_id': 12})
         self.assertEqual(called, ['name', 'family_id'], "Should be called "
                          "in the order added")
@@ -944,14 +974,14 @@ class SanitizerTest(TestCase):
             sanitizer = Sanitizer(pets)
 
             @sanitizer.sanitizeField('name')
-            def name(self, engine, action, data, field, context):
+            def name(self, context, data, field):
                 called.append('name')
                 return data[field]
 
         sanitizer = Foo().sanitizer
 
         indata = {'family_id': 12}
-        output = yield sanitizer.sanitize('engine', 'update', indata)
+        output = yield sanitizer.sanitize('engine', 'update', 'query', indata)
         self.assertEqual(output, {'family_id': 12})
         self.assertEqual(called, [], "Should not call name validator since "
                          "name wasn't present")
@@ -965,7 +995,7 @@ class SanitizerTest(TestCase):
             sanitizer = Sanitizer(pets)
 
             @sanitizer.sanitizeField('name')
-            def name(self, engine, action, data, field, context):
+            def name(self, context, data, field):
                 pass
 
         self.assertEqual(Foo.sanitizer.getSanitizedFields(), ['name'])
