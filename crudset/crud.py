@@ -2,7 +2,7 @@ from twisted.internet import defer
 
 from sqlalchemy.sql import select, and_
 
-from crudset.error import TooMany
+from crudset.error import TooMany, MissingRequiredFields
 
 
 
@@ -50,15 +50,29 @@ class Readset(object):
 class Sanitizer(object):
 
 
-    def __init__(self, table, writeable=None):
+    def __init__(self, table, writeable=None, required=None):
+        """
+        @param table: An SQLAlchemy Table definition.
+        @param writeable: An optional list of fields that are writeable.
+            If C{None} then no fields are writeable.
+
+            Any field with a sanitizer added through L{sanitizeField} will
+            also be considered writeable.
+        @param required: An optional list of fields that are required
+            when creating a record.  If C{None} then no fields are required.
+            For updates, the fields may be absent, but can not be C{None}.
+        """
         self.table = table
         self._sanitizers = []
         self._sanitized_fields = []
-        self._post_sanitizers = [self._filterToWriteable]
-        if writeable is None:
-            self.writeable_columns = frozenset([x.name for x in table.columns])
-        else:
-            self.writeable_columns = frozenset(writeable)
+        self._post_sanitizers = [self._filterToWriteable, self._assertRequired]
+        self.required = set(required or [])
+        self.writeable = set(self.required)
+        for field in (writeable or []):
+            if type(field) in (str, unicode):
+                self.writeable.add(field)
+            else:
+                self.writeable.add(field.name)
 
     def __get__(self, instance, cls):
         if instance is None:
@@ -101,6 +115,7 @@ class Sanitizer(object):
         def deco(func):
             self._sanitizers.append(self._fieldSanitizer(func, field))
             self._sanitized_fields.append(field)
+            self.writeable.add(field)
             return func
         return deco
 
@@ -132,9 +147,29 @@ class Sanitizer(object):
         """
         result = {}
         for k, v in data.items():
-            if k in self.writeable_columns:
+            if k in self.writeable:
                 result[k] = v
         return result
+
+
+    def _assertRequired(self, instance, context, data):
+        """
+        Raise an exception if there are required fields missing.
+        """
+        # check for presence
+        if context.action == 'create':
+            missing = set(self.required) - set(data)
+            if missing:
+                raise MissingRequiredFields('Missing required fields: %s' % (
+                    ', '.join(missing)))
+
+        # check for nullness
+        for required_field in self.required:
+            if required_field in data and data[required_field] is None:
+                raise MissingRequiredFields('Required field is null: %s' % (
+                    required_field,))
+        return data
+
 
 
 
@@ -154,6 +189,11 @@ class _BoundSanitizer(object):
     @property
     def table(self):
         return self.sanitizer.table
+
+
+    @property
+    def writeable(self):
+        return self.sanitizer.writeable
 
 
 

@@ -6,14 +6,15 @@
 
 A tool for automating the creation of CRUDs.
 
-## Read ##
+## Read/Write ##
 
-Use a `Readset` to specify what fields are read.
+Use a `Readset` to specify what fields are read.  Use a `Sanitizer` to specify
+how fields are updated.
 
 <!-- test -->
 
 ```python
-from crudset import Crud, Readset
+from crudset import Crud, Readset, Sanitizer
 
 from twisted.internet import defer, task
 
@@ -32,11 +33,16 @@ people = Table('people', metadata,
     Column('pay_grade', Integer),
 )
 
-# The public crud will return only the id and name fields
-public_crud = Crud(Readset(people, ['id', 'name']))
+# The public crud will return only the id and name fields and will allow
+# writing of name and pay_grade.
+public_crud = Crud(
+    Readset(people, ['id', 'name']),
+    Sanitizer(people, ['name', 'pay_grade']))
 
-# The private crud will return all fields.
-private_crud = Crud(Readset(people))
+# The private crud will return all fields and allows writing all fields.
+private_crud = Crud(
+    Readset(people),
+    Sanitizer(people, people.columns))
 
 
 @defer.inlineCallbacks
@@ -70,7 +76,7 @@ def main(reactor):
 task.react(main, [])
 ```
 
-## Write ##
+## Sanitization ##
 
 Use a `Sanitizer` to restrict/modify what fields can be written.
 
@@ -97,10 +103,10 @@ people = Table('people', metadata,
 )
 
 class EveryoneIsSoylent(object):
-    sanitizer = Sanitizer(people)
+    sanitizer = Sanitizer(people, ['name', 'pay_grade', 'is_soylent_green'])
 
     @sanitizer.sanitizeData
-    def data(self, engine, action, data, context):
+    def data(self, context, data):
         data['is_soylent_green'] = True
         return data
 
@@ -138,7 +144,7 @@ You can create child CRUDs with certain attributes fixed.  For example:
 <!-- test -->
 
 ```python
-from crudset import Crud, Readset
+from crudset import Crud, Readset, Sanitizer
 
 from twisted.internet import defer, task
 
@@ -165,7 +171,7 @@ def main(reactor):
                            poolclass=StaticPool)
     yield engine.execute(CreateTable(people))
 
-    main_crud = Crud(Readset(people))
+    main_crud = Crud(Readset(people), Sanitizer(people, people.columns))
     team3_crud = main_crud.fix({'team_id': 3})
     team4_crud = main_crud.fix({'team_id': 4})
 
@@ -186,7 +192,7 @@ You can paginate a CRUD.
 <!-- test -->
 
 ```python
-from crudset import Crud, Readset, Paginator
+from crudset import Crud, Readset, Paginator, Sanitizer
 
 from twisted.internet import defer, task
 
@@ -211,7 +217,7 @@ def main(reactor):
                            poolclass=StaticPool)
     yield engine.execute(CreateTable(Books))
     
-    crud = Crud(Readset(Books))
+    crud = Crud(Readset(Books), Sanitizer(Books, Books.columns))
 
     for i in xrange(432):
         yield crud.create(engine, {'title': 'Book %s' % (i,)})
@@ -243,7 +249,7 @@ You can expose the table name of an object, or even map it to a different name.
 <!-- test -->
 
 ```python
-from crudset import Crud, Readset
+from crudset import Crud, Readset, Sanitizer
 
 from twisted.internet import defer, task
 
@@ -270,7 +276,8 @@ def main(reactor):
                            poolclass=StaticPool)
     yield engine.execute(CreateTable(people))
 
-    crud1 = Crud(Readset(people), table_attr='mytable')
+    crud1 = Crud(Readset(people), Sanitizer(people, people.columns),
+                 table_attr='mytable')
 
     john = yield crud1.create(engine, {'name': 'John'})
     assert john['mytable'] == 'people', john
