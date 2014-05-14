@@ -2,7 +2,7 @@ from twisted.internet import defer
 
 from sqlalchemy.sql import select, and_
 
-from crudset.error import MissingRequiredFields, NotEditable, TooMany
+from crudset.error import TooMany
 
 
 
@@ -11,106 +11,152 @@ class Ref(object):
     A reference to another object (single object) for use within a L{Policy}.
     """
 
-    def __init__(self, attr_name, policy, join):
-        self.attr_name = attr_name
-        self.policy = policy
+    def __init__(self, readset, join):
+        self.readset = readset
         self.join = join
 
 
-class Policy(object):
+
+class Readset(object):
     """
-    I am a read-write policy for a table's attributes.
+    A description of the fields an references that are returned from
+    data-returning functions.
     """
 
-    def __init__(self, table, required=None, writeable=None, readable=None,
-                 references=None):
-        """
-        @param required: List of required field names.
-
-        @param writeable: List of writeable fields.  If C{None} then all
-            readable fields are writeable.
-        
-        @param readable: List of readable fields.  If C{None} then all
-            fields are readable.
-
-        @param references: List of L{Ref} objects.
-        """
+    def __init__(self, table, readable=None, references=None):
         self.table = table
-        self.required = frozenset(required or [])
-        self.references = references or []
-        
-        # readable
+
         if readable is None:
             self.readable_columns = list(table.columns)
         else:
             self.readable_columns = [getattr(table.c, x) for x in readable]
         self.readable = frozenset([x.name for x in self.readable_columns])
 
-        # writeable
+        self.references = references or {}
+
+
+class Sanitizer(object):
+
+
+    def __init__(self, table, writeable=None):
+        self.table = table
+        self._sanitizers = []
+        self._sanitized_fields = []
+        self._post_sanitizers = [self._filterToWriteable]
         if writeable is None:
-            self.writeable = self.readable
+            self.writeable_columns = frozenset([x.name for x in table.columns])
         else:
-            self.writeable = frozenset(writeable)
-        self.writeable_columns = [getattr(table.c, x) for x in self.writeable]
+            self.writeable_columns = frozenset(writeable)
 
-        if self.writeable > self.readable:
-            raise ValueError('writeable columns must be a subset of readable '
-                             'columns: writeable: %r, readable: %r' % (
-                             self.writeable, self.readable))
+    def __get__(self, instance, cls):
+        if instance is None:
+            return self
+        return self.bind(instance)
 
 
-    def narrow(self, also_required=None, writeable=None, readable=None):
+    def bind(self, instance):
+        return _BoundSanitizer(self, instance)
+
+
+    def sanitizeMethods(self):
         """
-        Create a narrower, more restricted L{Policy}.
-
-        @param also_required: The list of B{additional} fields to require.
-
-        @param writeable: List of writeable fields.  If C{None} then the
-            writeable fields will be the narrower of the base writeable set and
-            C{readable}.
-
-        @param readable: List of readable fields.  If C{None} then this will
-            be the same as the base readable set.
+        Return a list of methods to be used to sanitize data.
         """
-        required = set(also_required or []) | self.required
-        readable = readable or self.readable
-        
-        if writeable is None:
-            writeable = set(readable) & self.writeable
+        return self._sanitizers + self._post_sanitizers
 
-        # make sure readable is a subset
-        extra = set(readable) - self.readable
-        if extra:
-            raise ValueError("Readable set isn't a subset of base policy."
-                             "  These are extra: %r" % (extra,))
 
-        # make sure writeable is a subset
-        extra = set(writeable) - self.writeable
-        if extra:
-            raise ValueError("Writeable set isn't a subset of base policy."
-                             "  These are extra: %r" % (extra,))
+    def getSanitizedFields(self):
+        """
+        List fields being sanitized.  This could be helpful to statically(ish)
+        check that all fields are being sanitized.
+        """
+        return self._sanitized_fields
 
-        return Policy(
-            self.table,
-            required=required,
-            writeable=writeable,
-            readable=readable,
-            references=self.references)
+
+    def sanitizeData(self, func):
+        """
+        Add a sanitization function for the whole blob of data.
+        """
+        self._sanitizers.append(func)
+        return func
+
+
+    def sanitizeField(self, field):
+        """
+        Add a sanitization function for a specific named field.  This is a
+        more specific version of the general L{sanitizeData} method.
+        """
+        def deco(func):
+            self._sanitizers.append(self._fieldSanitizer(func, field))
+            self._sanitized_fields.append(field)
+            return func
+        return deco
+
+
+    @defer.inlineCallbacks
+    def sanitize(self, engine, action, data, instance=None):
+        context = {}
+        result = data
+        for func in self.sanitizeMethods():
+            result = yield func(instance, engine, action, result, context)
+        defer.returnValue(result)
+
+
+    def _fieldSanitizer(self, func, field):
+        @defer.inlineCallbacks
+        def _sanitizer(instance, engine, action, data, context):
+            if field not in data:
+                defer.returnValue(data)
+            else:
+                output = yield func(instance, engine, action, data, field, context)
+                data[field] = output
+                defer.returnValue(data)
+        return _sanitizer
+
+
+    def _filterToWriteable(self, instance, engine, action, data, context):
+        """
+        Filter all the columns out of C{data} that aren't marked writeable.
+        """
+        result = {}
+        for k, v in data.items():
+            if k in self.writeable_columns:
+                result[k] = v
+        return result
+
+
+
+class _BoundSanitizer(object):
+
+
+    def __init__(self, sanitizer, instance):
+        self.sanitizer = sanitizer
+        self.instance = instance
+
+
+    def sanitize(self, engine, action, data):
+        return self.sanitizer.sanitize(engine, action, data, self.instance)        
+
+
+    @property
+    def table(self):
+        return self.sanitizer.table
 
 
 
 class Crud(object):
     """
-    This turns a L{Policy} into a CRUD.  See my L{create}, L{fetch}, L{count},
-    L{update} and L{delete} methods.
+    This turns a L{Readset} and a L{Sanitizer} into a CRUD.
+    See my L{create}, L{fetch}, L{count}, L{update} and L{delete} methods.
 
     Also, you can use L{fix} to make new L{Crud} instances with certain
     attributes fixed (unchangeable by the user).
     """
 
-    def __init__(self, policy, table_attr=None, table_map=None):
+    def __init__(self, readset, sanitizer=None, table_attr=None, table_map=None):
         """
-        @param policy: A L{Policy} instance.
+        @param readset: A L{Readset} instance.
+        @param sanitizer: A L{Sanitizer} instance.
 
         @param table_attr: If set, then the data dictionaries returned by my
             methods will contain an item with C{table_attr} key and SQL table
@@ -119,7 +165,12 @@ class Crud(object):
         @param table_map: If C{table_attr} is set then this dictionary will
             map table names to something else.
         """
-        self.policy = policy
+        self.readset = readset
+        
+        if sanitizer is None:
+            sanitizer = Sanitizer(readset.table).bind(None)
+        self.sanitizer = sanitizer
+
         self.table_attr = table_attr
         self.table_map = table_map or {}
         self._fixed = {}
@@ -135,43 +186,55 @@ class Crud(object):
 
         @return: A new L{Crud}.
         """
-        crud = Crud(self.policy, self.table_attr,
+        crud = Crud(self.readset, self.sanitizer, self.table_attr,
                     self.table_map)
         crud._fixed = self._fixed.copy()
         crud._fixed.update(attrs)
         return crud
 
 
-    def withPolicy(self, policy):
-        """
-        Create a new crud with a different policy.
-        """
-        crud = Crud(policy, self.table_attr, self.table_map)
-        crud._fixed = self._fixed.copy()
-        return crud
-
-
     @defer.inlineCallbacks
     def create(self, engine, attrs):
-        # check for editability
-        forbidden = set(attrs) - self.policy.writeable
-        if forbidden:
-            raise NotEditable(', '.join(forbidden))
-
+        """
+        Create a single record.
+        """
         # fixed attributes
         attrs.update(self._fixed)
 
-        # check required fields
-        missing = self.policy.required - set(attrs)
-        if missing:
-            raise MissingRequiredFields(', '.join(missing))
+        # sanitize
+        sanitized = yield self.sanitizer.sanitize(engine, 'create', attrs)
 
         # do it
-        table = self.policy.table
-        result = yield engine.execute(table.insert().values(**attrs))
+        table = self.sanitizer.table
+        result = yield engine.execute(table.insert().values(**sanitized))
         pk = result.inserted_primary_key
         obj = yield self._getOne(engine, pk)
         defer.returnValue(obj)
+
+
+    @defer.inlineCallbacks
+    def update(self, engine, attrs, where=None):
+        """
+        Update a set of records.
+        """
+        up = self.sanitizer.table.update()
+        up = self._applyConstraints(up)
+
+        # you can't update fixed attributes
+        for attr in self._fixed:
+            attrs.pop(attr, None)
+
+        sanitized = yield self.sanitizer.sanitize(engine, 'update', attrs)
+
+        if where is not None:
+            up = up.where(where)
+
+        if sanitized:
+            up = up.values(**sanitized)
+            yield engine.execute(up)
+
+        rows = yield self.fetch(engine, where)
+        defer.returnValue(rows)
 
 
     @defer.inlineCallbacks
@@ -234,34 +297,11 @@ class Crud(object):
 
 
     @defer.inlineCallbacks
-    def update(self, engine, attrs, where=None):
-        """
-        Update a set of records.
-        """
-        # check for editability
-        forbidden = set(attrs) - self.policy.writeable
-        if forbidden:
-            raise NotEditable(', '.join(forbidden))
-
-        up = self.policy.table.update()
-        up = self._applyConstraints(up)
-
-        if where is not None:
-            up = up.where(where)
-
-        up = up.values(**attrs)
-        yield engine.execute(up)
-
-        rows = yield self.fetch(engine, where)
-        defer.returnValue(rows)
-
-
-    @defer.inlineCallbacks
     def delete(self, engine, where=None):
         """
         Delete a set of records.
         """
-        delete = self.policy.table.delete()
+        delete = self.sanitizer.table.delete()
         delete = self._applyConstraints(delete)
 
         if where is not None:
@@ -284,13 +324,13 @@ class Crud(object):
         return self._base_query
 
     def _generateBaseQueryAndColumns(self):
-        columns = [(None,x) for x in self.policy.readable_columns]
+        columns = [(None,x) for x in self.readset.readable_columns]
         join = None
-        if self.policy.references:
-            join = self.policy.table
-            for ref in self.policy.references:
-                join = join.outerjoin(ref.policy.table, ref.join)
-                columns.extend([(ref.attr_name, x) for x in ref.policy.readable_columns])
+        if self.readset.references:
+            join = self.readset.table
+            for ref_name, ref in self.readset.references.items():
+                join = join.outerjoin(ref.readset.table, ref.join)
+                columns.extend([(ref_name, x) for x in ref.readset.readable_columns])
         
         base = select([x[1] for x in columns], use_labels=True)
         if join is not None:
@@ -303,7 +343,7 @@ class Crud(object):
         if self._fixed:
             where = None
             for k, v in self._fixed.items():
-                col = getattr(self.policy.table.c, k)
+                col = getattr(self.readset.table.c, k)
                 comp = col == v
                 if where is not None:
                     where = and_(where, comp)
@@ -319,7 +359,7 @@ class Crud(object):
         query = self.base_query
         
         # pk
-        table = self.policy.table
+        table = self.readset.table
         where = [x == y for (x,y) in zip(table.primary_key.columns, pk)]
         query = query.where(*where)
         
@@ -336,7 +376,7 @@ class Crud(object):
     def _rowToDict(self, row):
         d = {}
         if self.table_attr:
-            d[self.table_attr] = self._tableName(self.policy.table)
+            d[self.table_attr] = self._tableName(self.readset.table)
         # XXX the null-reference checking seems less than optimal (lots of
         # looping and branching.  Maybe there's a way to have the response
         # tell us clearly whether the record is null or not)

@@ -6,17 +6,14 @@
 
 A tool for automating the creation of CRUDs.
 
-## Policies ##
+## Read ##
 
-In this code, there are two roles:
-
-1. Managers, with full access
-2. Users, with limited access
+Use a `Readset` to specify what fields are read.
 
 <!-- test -->
 
 ```python
-from crudset import Crud, Policy
+from crudset import Crud, Readset
 
 from twisted.internet import defer, task
 
@@ -35,27 +32,11 @@ people = Table('people', metadata,
     Column('pay_grade', Integer),
 )
 
+# The public crud will return only the id and name fields
+public_crud = Crud(Readset(people, ['id', 'name']))
 
-# managers can view and edit all the fields (except for changing the id)
-
-manager_policy = Policy(people,
-    required=['name', 'pay_grade'],
-    readable=['id', 'is_soylent_green', 'name', 'pay_grade'],
-    writeable=['is_soylent_green', 'name', 'pay_grade'],
-)
-
-
-# regular employees can only change their name, and can't see that they are
-# soylent green.
-
-employee_policy = Policy(people,
-    required=['name', 'pay_grade'],
-    readable=['id', 'name', 'pay_grade'],
-    writeable=['name'],
-)
-
-manager_crud = Crud(manager_policy)
-employee_crud = Crud(employee_policy)
+# The private crud will return all fields.
+private_crud = Crud(Readset(people))
 
 
 @defer.inlineCallbacks
@@ -67,36 +48,45 @@ def main(reactor):
                            poolclass=StaticPool)
     yield engine.execute(CreateTable(people))
 
-    # manager
-    yield manager_crud.create(engine, {
-        'is_soylent_green': True,
-        'name': 'Fern',
-        'pay_grade': 100,
-    })
-    yield manager_crud.create(engine, {
+    # private
+    private_joe = yield private_crud.create(engine, {
         'name': 'Joe',
         'pay_grade': 90,
     })
+    assert 'id' in private_joe
+    assert 'name' in private_joe
+    assert 'pay_grade' in private_joe
+    assert 'is_soylent_green' in private_joe
 
-    # employee
-    employees = yield employee_crud.fetch(engine)
-    # This includes only the readable fields from the employee_policy above.
-    print employees
+    # public
+    everyone = yield public_crud.fetch(engine)
+    public_joe = everyone[0]
+    assert 'pay_grade' not in public_joe, public_joe
+    assert 'is_soylent_green' not in public_joe, public_joe
+    assert 'id' in public_joe, public_joe
+    assert 'name' in public_joe, public_joe
 
 
 task.react(main, [])
 ```
 
-### Narrowing ###
+## Write ##
 
-You can build policies from other policies.
+Use a `Sanitizer` to restrict/modify what fields can be written.
 
 <!-- test -->
 
 ```python
-from crudset import Policy
+from crudset import Crud, Readset, Sanitizer
 
-from sqlalchemy import MetaData, Table, Column, Integer, String, Boolean
+from twisted.internet import defer, task
+
+from sqlalchemy import MetaData, Table, Column, Integer, String, create_engine
+from sqlalchemy import Boolean
+from sqlalchemy.schema import CreateTable
+from sqlalchemy.pool import StaticPool
+
+from alchimia import TWISTED_STRATEGY
 
 metadata = MetaData()
 people = Table('people', metadata,
@@ -106,16 +96,38 @@ people = Table('people', metadata,
     Column('pay_grade', Integer),
 )
 
-# prevent changing the id at the system level
-system_policy = Policy(people,
-    writeable=['is_soylent_green', 'name', 'pay_grade'],
-)
+class EveryoneIsSoylent(object):
+    sanitizer = Sanitizer(people)
 
-# prevent changing everything but name at the user level
-user_policy = system_policy.narrow(
-    readable=['name', 'pay_grade'],
-    writeable=['name'],
-)
+    @sanitizer.sanitizeData
+    def data(self, engine, action, data, context):
+        data['is_soylent_green'] = True
+        return data
+
+crud = Crud(Readset(people), EveryoneIsSoylent().sanitizer)
+
+
+@defer.inlineCallbacks
+def main(reactor):
+    engine = create_engine('sqlite://',
+                           connect_args={'check_same_thread': False},
+                           reactor=reactor,
+                           strategy=TWISTED_STRATEGY,
+                           poolclass=StaticPool)
+    yield engine.execute(CreateTable(people))
+
+    joe = yield crud.create(engine, {
+        'name': 'Joe',
+        'pay_grade': 90,
+    })
+    assert joe['is_soylent_green'] == True, joe
+    
+    peeps = yield crud.update(engine, {'is_soylent_green': False})
+    assert peeps[0]['is_soylent_green'] == True, peeps
+
+
+
+task.react(main, [])
 ```
 
 
@@ -126,7 +138,7 @@ You can create child CRUDs with certain attributes fixed.  For example:
 <!-- test -->
 
 ```python
-from crudset import Crud, Policy
+from crudset import Crud, Readset
 
 from twisted.internet import defer, task
 
@@ -153,7 +165,7 @@ def main(reactor):
                            poolclass=StaticPool)
     yield engine.execute(CreateTable(people))
 
-    main_crud = Crud(Policy(people))
+    main_crud = Crud(Readset(people))
     team3_crud = main_crud.fix({'team_id': 3})
     team4_crud = main_crud.fix({'team_id': 4})
 
@@ -174,7 +186,7 @@ You can paginate a CRUD.
 <!-- test -->
 
 ```python
-from crudset import Crud, Policy, Paginator
+from crudset import Crud, Readset, Paginator
 
 from twisted.internet import defer, task
 
@@ -199,7 +211,7 @@ def main(reactor):
                            poolclass=StaticPool)
     yield engine.execute(CreateTable(Books))
     
-    crud = Crud(Policy(Books))
+    crud = Crud(Readset(Books))
 
     for i in xrange(432):
         yield crud.create(engine, {'title': 'Book %s' % (i,)})
@@ -231,7 +243,7 @@ You can expose the table name of an object, or even map it to a different name.
 <!-- test -->
 
 ```python
-from crudset import Crud, Policy
+from crudset import Crud, Readset
 
 from twisted.internet import defer, task
 
@@ -258,12 +270,12 @@ def main(reactor):
                            poolclass=StaticPool)
     yield engine.execute(CreateTable(people))
 
-    crud1 = Crud(Policy(people), table_attr='mytable')
+    crud1 = Crud(Readset(people), table_attr='mytable')
 
     john = yield crud1.create(engine, {'name': 'John'})
     assert john['mytable'] == 'people', john
 
-    crud2 = Crud(Policy(people), table_attr='Object',
+    crud2 = Crud(Readset(people), table_attr='Object',
                  table_map={people: 'Person'})
     people_list = yield crud2.fetch(engine)
     person1 = people_list[0]
