@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, ForeignKey
 from sqlalchemy.schema import CreateTable
 from sqlalchemy.pool import StaticPool
 
-from crudset.error import TooMany
+from crudset.error import TooMany, MissingRequiredFields
 from crudset.crud import Crud, Paginator, Ref, Sanitizer, Readset
 
 from twisted.python import log
@@ -350,7 +350,7 @@ class CrudTest(TestCase):
         Fixed attributes are part of the update.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         yield crud.create(engine, {'surname': 'Jones', 'location': 'anvilania'})
         yield crud.create(engine, {'surname': 'James', 'location': 'gotham'})
 
@@ -370,7 +370,7 @@ class CrudTest(TestCase):
         You aren't allowed to update the fixed attributes.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         yield crud.create(engine, {'surname': 'Jones', 'location': 'bar'})
 
         crud2 = crud.fix({'surname': 'Jones'})
@@ -478,7 +478,7 @@ class CrudTest(TestCase):
         engine = yield self.engine()
         called = []
         class Foo(object):
-            sanitizer = Sanitizer(families)
+            sanitizer = Sanitizer(families, ['surname', 'location'])
             @sanitizer.sanitizeData
             def sani(self, context, data):
                 called.append(context)
@@ -651,7 +651,7 @@ class CrudTest(TestCase):
 
         crud = Crud(Readset(people, references={
             'family': Ref(Readset(families), people.c.family_id == families.c.id),
-        }), table_attr='foo')
+        }), Sanitizer(people, people.columns), table_attr='foo')
         sam = yield crud.create(engine, {'name': 'Sam', 'family_id': family['id']})
         self.assertEqual(sam['foo'], 'people')
         self.assertEqual(sam['family']['foo'], 'family')
@@ -663,13 +663,14 @@ class CrudTest(TestCase):
         You can map table names to something else.
         """
         engine = yield self.engine()
-        fam_crud = Crud(Readset(families))
+        fam_crud = Crud(Readset(families), Sanitizer(families, families.columns))
         family = yield fam_crud.create(engine, {'surname': 'Jones'})
 
         crud = Crud(
             Readset(people, references={
                 'family': Ref(Readset(families), people.c.family_id == families.c.id),
             }),
+            Sanitizer(people, people.columns),
             table_attr='foo',
             table_map={
                 people: 'Person',
@@ -817,7 +818,7 @@ class PaginatorTest(TestCase):
         The page count should be accurate for all numbers.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(pets))
+        crud = Crud(Readset(pets), Sanitizer(pets, pets.columns))
         pager = Paginator(crud, page_size=3, order=pets.c.id)
         
         count = yield pager.pageCount(engine)
@@ -844,8 +845,7 @@ class SanitizerTest(TestCase):
     @defer.inlineCallbacks
     def test_default(self):
         """
-        An empty sanitizer will allow any column to be updated and strip out
-        unknown fields.
+        An empty sanitizer will forbid any column from being updated.
         """
         class Foo(object):
             sanitizer = Sanitizer(pets)
@@ -854,8 +854,7 @@ class SanitizerTest(TestCase):
         data = {'foo': 'bar', 'id': 12, 'family_id': 19, 'owner_id': -1,
                 'name': 'bob'}
         output = yield sanitizer.sanitize('engine', 'update', 'query', data)
-        self.assertEqual(output,
-            {'id': 12, 'family_id': 19, 'owner_id': -1, 'name': 'bob'})
+        self.assertEqual(output, {})
 
 
     @defer.inlineCallbacks
@@ -874,6 +873,54 @@ class SanitizerTest(TestCase):
         self.assertEqual(output, {'name': 'bob'})
 
 
+    def test_writeable_asColumns(self):
+        """
+        You can specify the list of writeable fields as SQLAlchemy columns.
+        """
+        sanitizer = Sanitizer(pets, writeable=[pets.c.name, pets.c.family_id])
+        self.assertEqual(set(sanitizer.writeable), set(['name', 'family_id']))
+
+
+    @defer.inlineCallbacks
+    def test_required(self):
+        """
+        You can specify a list of fields that are required on create.
+        """
+        sanitizer = Sanitizer(pets, required=['name'])
+        self.assertEqual(set(sanitizer.required), set(['name']))
+        self.assertIn('name', sanitizer.writeable, "Required fields are "
+                      "writeable")
+
+        log.msg('before first')
+        yield self.assertFailure(sanitizer.sanitize(
+            'engine', 'create', 'query', {}), MissingRequiredFields)
+
+        log.msg('before second')
+        yield self.assertFailure(sanitizer.sanitize(
+            'engine', 'create', 'query', {'name': None}),
+            MissingRequiredFields)
+
+        log.msg('before third')
+        output = yield sanitizer.sanitize('engine', 'create', 'query', {
+            'name': 'bob'})
+        self.assertEqual(output, {'name': 'bob'})
+
+
+    @defer.inlineCallbacks
+    def test_required_update(self):
+        """
+        Required on create validation does not happen on update except
+        on null-checking.
+        """
+        sanitizer = Sanitizer(pets, required=['name'])
+        self.assertEqual(set(sanitizer.required), set(['name']))
+        output = yield sanitizer.sanitize('engine', 'update', 'query', {})
+        self.assertEqual(output, {})
+
+        yield self.assertFailure(sanitizer.sanitize(
+            'engine', 'update', 'query', {'name': None}), MissingRequiredFields)
+
+
     @defer.inlineCallbacks
     def test_sanitizeData(self):
         """
@@ -881,7 +928,7 @@ class SanitizerTest(TestCase):
         """
         called = {}
         class Foo(object):
-            sanitizer = Sanitizer(pets)
+            sanitizer = Sanitizer(pets, writeable=['name'])
 
             @sanitizer.sanitizeData
             def myFunc(self, context, data):
@@ -925,6 +972,8 @@ class SanitizerTest(TestCase):
                 return 'new name'
 
         sanitizer = Foo().sanitizer
+        self.assertEqual(set(sanitizer.writeable), set(['name']),
+                         "Should add sanitized fields to writeable list")
 
         indata = {'name': 'sam'}
         output = yield sanitizer.sanitize('engine', 'update', 'query', indata)
@@ -971,7 +1020,7 @@ class SanitizerTest(TestCase):
         """
         called = []
         class Foo(object):
-            sanitizer = Sanitizer(pets)
+            sanitizer = Sanitizer(pets, ['family_id', 'name'])
 
             @sanitizer.sanitizeField('name')
             def name(self, context, data, field):
