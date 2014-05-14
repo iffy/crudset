@@ -105,7 +105,7 @@ class CrudTest(TestCase):
         engine = yield self.engine()
         called = {}
         class Foo(object):
-            sanitizer = Sanitizer(families)
+            sanitizer = Sanitizer(families, families.columns)
             @sanitizer.sanitizeData
             def sani(self, context, data):
                 called['context'] = context
@@ -124,8 +124,7 @@ class CrudTest(TestCase):
         You can fix attributes one after the other.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families),
-                    Sanitizer(families, ['location', 'surname']))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         crud = crud.fix({'surname': 'Jones'})
         crud = crud.fix({'location': 'Sunnyville'})
 
@@ -141,7 +140,7 @@ class CrudTest(TestCase):
         by default.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         yield crud.create(engine, {'surname': '13'})
 
         fams = yield crud.fetch(engine)
@@ -155,7 +154,7 @@ class CrudTest(TestCase):
         Fixed attributes restrict the fetched objects.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         yield crud.create(engine, {'surname': 'Jones'})
 
         crud2 = crud.fix({'surname': 'Johnson'})
@@ -170,7 +169,7 @@ class CrudTest(TestCase):
         You can limit even further.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
 
         for i in xrange(10):
             yield crud.create(engine, {'surname': 'Family %d' % (i,)})
@@ -186,7 +185,7 @@ class CrudTest(TestCase):
         You can limit the set of readable fields.
         """
         engine = yield self.engine()
-        crud1 = Crud(Readset(families))
+        crud1 = Crud(Readset(families), Sanitizer(families, families.columns))
         yield crud1.create(engine, {'surname': 'Johnson', 'location': 'Alabama'})
         
         crud2 = Crud(Readset(families, ['surname']))
@@ -201,7 +200,7 @@ class CrudTest(TestCase):
         You can limit the number of returned records.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         for i in xrange(10):
             yield crud.create(engine, {'surname': 'Johnson %d' % (i,)})
 
@@ -215,7 +214,7 @@ class CrudTest(TestCase):
         You can specify an ordering
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         for i in xrange(10):
             yield crud.create(engine, {'surname': 'sodkevoiuans'[i]})
         
@@ -230,7 +229,7 @@ class CrudTest(TestCase):
         You can offset the limit.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         fams = []
         for i in xrange(10):
             fam = yield crud.create(engine, {'surname': 'abcdefghijklmnop'[i]})
@@ -246,7 +245,7 @@ class CrudTest(TestCase):
         You can get just one item.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         fam = yield crud.create(engine, {'surname': 'hey'})
         one = yield crud.getOne(engine)
         self.assertEqual(one, fam)
@@ -258,7 +257,7 @@ class CrudTest(TestCase):
         You can get one by a where clause
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         fam1 = yield crud.create(engine, {'surname': 'bob'})
         yield crud.create(engine, {'surname': 'Jones'})
         one = yield crud.getOne(engine, families.c.surname == 'bob')
@@ -308,7 +307,7 @@ class CrudTest(TestCase):
         You can count filtered records.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         for i in xrange(14):
             yield crud.create(engine, {'surname': str(i)})
 
@@ -322,7 +321,7 @@ class CrudTest(TestCase):
         The count is restricted by fixed attributes.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         yield crud.create(engine, {'surname': 'Jones'})
         yield crud.create(engine, {'surname': 'Arnold'})
 
@@ -337,7 +336,7 @@ class CrudTest(TestCase):
         You can update sets.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         yield crud.create(engine, {'surname': 'Jones'})
         fams = yield crud.update(engine, {'surname': 'Jamison'})
         self.assertEqual(len(fams), 1)
@@ -386,7 +385,7 @@ class CrudTest(TestCase):
         It's a no-op to update nothing.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         yield crud.create(engine, {'surname': 'Jones'})
         fams = yield crud.update(engine, {})
         fam = fams[0]
@@ -399,7 +398,7 @@ class CrudTest(TestCase):
         All the fixed attributes should be taken into consideration.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(pets))
+        crud = Crud(Readset(pets), Sanitizer(pets, pets.columns))
         yield crud.create(engine, {'name': 'Jones', 'family_id': 1})
         yield crud.create(engine, {'name': 'James', 'family_id': 20})
         yield crud.create(engine, {'name': 'Jones', 'family_id': 20})
@@ -428,7 +427,7 @@ class CrudTest(TestCase):
         You can filter the update by expression, too.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         yield crud.create(engine, {'surname': 'Jones', 'location': 'anvilania'})
         yield crud.create(engine, {'surname': 'James', 'location': 'gotham'})
 
@@ -451,7 +450,7 @@ class CrudTest(TestCase):
         engine = yield self.engine()
         called = []
         class Foo(object):
-            sanitizer = Sanitizer(families)
+            sanitizer = Sanitizer(families, families.columns)
             @sanitizer.sanitizeData
             def sani(self, context, data):
                 called.append(context)
@@ -515,7 +514,7 @@ class CrudTest(TestCase):
         The fixed variables influence what is deleted.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         yield crud.create(engine, {'surname': 'Jones'})
         crud2 = crud.fix({'surname': 'Arnold'})
         yield crud2.create(engine, {})
@@ -532,7 +531,7 @@ class CrudTest(TestCase):
         You can filter by expression.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families))
+        crud = Crud(Readset(families), Sanitizer(families, families.columns))
         yield crud.create(engine, {'surname': 'Jones'})
         yield crud.create(engine, {'surname': 'Arnold'})
         yield crud.delete(engine, families.c.surname == 'Arnold')
@@ -551,7 +550,7 @@ class CrudTest(TestCase):
         crud = Crud(Readset(people, references={
             'family': Ref(Readset(families),
                           people.c.family_id == families.c.id),
-        }))
+        }), Sanitizer(people, people.columns))
 
         yield crud.create(engine, {'name': 'Sam'})
         peeps = yield crud.fetch(engine, )
@@ -567,12 +566,12 @@ class CrudTest(TestCase):
         You can nest objects by reference.
         """
         engine = yield self.engine()
-        fam_crud = Crud(Readset(families))
+        fam_crud = Crud(Readset(families), Sanitizer(families, families.columns))
         family = yield fam_crud.create(engine, {'surname': 'Jones'})
 
         crud = Crud(Readset(people, references={
             'family': Ref(Readset(families), people.c.family_id == families.c.id),
-        }))
+        }), Sanitizer(people, people.columns))
         sam = yield crud.create(engine, {'name': 'Sam', 'family_id': family['id']})
         self.assertEqual(sam['family'], family)
 
@@ -583,10 +582,10 @@ class CrudTest(TestCase):
         You can have multiple references.
         """
         engine = yield self.engine()
-        fam_crud = Crud(Readset(families))
+        fam_crud = Crud(Readset(families), Sanitizer(families, families.columns))
         johnson = yield fam_crud.create(engine, {'surname': 'Johnson'})
 
-        person_crud = Crud(Readset(people))
+        person_crud = Crud(Readset(people), Sanitizer(people, people.columns))
         john = yield person_crud.create(engine, {
             'family_id': johnson['id'],
             'name': 'John',
@@ -595,7 +594,7 @@ class CrudTest(TestCase):
         pets_crud = Crud(Readset(pets, references={
             'family': Ref(Readset(families), pets.c.family_id == families.c.id),
             'owner': Ref(Readset(people), pets.c.owner_id == people.c.id),
-        }))
+        }), Sanitizer(pets, pets.columns))
 
         cat = yield pets_crud.create(engine, {
             'family_id': johnson['id'],
@@ -773,7 +772,7 @@ class PaginatorTest(TestCase):
         You can paginate filtered results, too
         """
         engine = yield self.engine()
-        crud = Crud(Readset(pets))
+        crud = Crud(Readset(pets), Sanitizer(pets, pets.columns))
         pager = Paginator(crud, page_size=3, order=pets.c.id)
 
         things = []
