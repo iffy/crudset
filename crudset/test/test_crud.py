@@ -79,6 +79,13 @@ class CrudTest(TestCase):
         self.assertEqual(crud.sanitizer.sanitizers, [sani, sani])
 
 
+    def test_read_write_tablesDiffer(self):
+        """
+        The Readset and Writeset tables must be the same
+        """
+        self.assertRaises(Exception, Crud, Readset(pets), Sanitizer(families))
+
+
     @defer.inlineCallbacks
     def test_create(self):
         """
@@ -1083,11 +1090,14 @@ class SaniChainTest(TestCase):
         chain.
         """
         sani1 = MagicMock()
+        sani1.table = 'foo'
         sani1.sanitize.return_value = {'foo': 'bar'}
         sani2 = MagicMock()
+        sani2.table = 'foo'
         sani2.sanitize.return_value = defer.succeed({'hey': 'ho'})
 
         chain = SaniChain([sani1, sani2])
+        self.assertEqual(chain.table, 'foo')
         data = {'1': '2'}
         context = SanitizationContext(None, None, None)
         output = yield chain.sanitize(context, data)
@@ -1096,5 +1106,15 @@ class SaniChainTest(TestCase):
         sani2.sanitize.assert_called_once_with(context, {'foo': 'bar'})
         self.assertEqual(output, {'hey': 'ho'})
 
+
+    def test_differentTable(self):
+        """
+        Sanitizers must have the same table.
+        """
+        sani1 = MagicMock()
+        sani1.table = 'foo'
+        sani2 = MagicMock()
+        sani2.table = 'bar'
+        self.assertRaises(Exception, SaniChain, [sani1, sani2])
 
 

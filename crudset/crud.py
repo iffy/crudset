@@ -16,6 +16,10 @@ class Ref(object):
         self.join = join
 
 
+    def __repr__(self):
+        return 'Ref(%r, %r)' % (self.readset, self.join)
+
+
 
 class SanitizationContext(object):
     """
@@ -28,6 +32,11 @@ class SanitizationContext(object):
         self.query = query
 
 
+    def __repr__(self):
+        return 'SanitizationContext(%r, %r, %r)' % (
+            self.engine, self.action, self.query)
+
+
 class SaniChain(object):
     """
     I chain sanitizers together.
@@ -35,6 +44,15 @@ class SaniChain(object):
 
     def __init__(self, sanitizers):
         self.sanitizers = sanitizers
+        tables = set([x.table for x in sanitizers])
+        if len(tables) != 1:
+            raise TypeError("Chained sanitizers must have the same table: %r" % (
+                            tables,))
+        self.table = tables.pop()
+
+
+    def __repr__(self):
+        return 'SaniChain(%r, table=%r)' % (self.sanitizers, self.table)
 
 
     @defer.inlineCallbacks
@@ -63,6 +81,11 @@ class Readset(object):
         self.references = references or {}
 
 
+    def __repr__(self):
+        return 'Readset(%r, %r, %r)' % (
+            self.table, list(self.readable), self.references)
+
+
 class Writeset(object):
     """
     A description of the fields that are writeable.
@@ -72,12 +95,17 @@ class Writeset(object):
         """
 
         """
+        self.table = table
         self.writeable = set()
         for field in (writeable or []):
             if type(field) in (str, unicode):
                 self.writeable.add(field)
             else:
                 self.writeable.add(field.name)
+
+
+    def __repr__(self):
+        return 'Writeset(%r, %r)' % (self.table, self.writeable)
 
 
     def sanitize(self, context, data):
@@ -106,6 +134,10 @@ class Sanitizer(object):
         self._writeset = Writeset(table, table.columns)
         self._post_sanitizers = [self._assertRequired]
         self.required = set(required or [])
+
+
+    def __repr__(self):
+        return 'Sanitizer(%r, %r)' % (self.table, self.required)
 
 
     def __get__(self, instance, cls):
@@ -203,6 +235,10 @@ class _BoundSanitizer(object):
         self.instance = instance
 
 
+    def __repr__(self):
+        return '_BoundSanitizer(%r, %r)' % (self.sanitizer, self.instance)
+
+
     def sanitize(self, context, data):
         return self.sanitizer.sanitize(context, data, self.instance)        
 
@@ -210,11 +246,6 @@ class _BoundSanitizer(object):
     @property
     def table(self):
         return self.sanitizer.table
-
-
-    @property
-    def writeable(self):
-        return self.sanitizer.writeable
 
 
 
@@ -251,11 +282,20 @@ class Crud(object):
             sanitizer = SaniChain(sanitizer)
         self.sanitizer = sanitizer
 
+        if self.sanitizer.table != self.readset.table:
+            raise TypeError("Readset and sanitizer/writeset are for different"
+                " tables: %r %r" % (self.readset, self.sanitizer))
+
         self.table_attr = table_attr
         self.table_map = table_map or {}
         self._fixed = {}
         self._select_columns = []
         self._base_query = None
+
+
+    def __repr__(self):
+        return 'Crud(%r, %r, table_attr=%r, table_map=%r)' % (
+            self.readset, self.sanitizer, self.table_attr, self.table_map)
 
 
     def fix(self, attrs):
@@ -497,6 +537,11 @@ class Paginator(object):
         self.crud = crud
         self.page_size = page_size
         self.order = order
+
+
+    def __repr__(self):
+        return 'Paginator(%r, %r, %r)' % (
+            self.crud, self.page_size, self.order)
 
 
     def page(self, engine, number, where=None):
