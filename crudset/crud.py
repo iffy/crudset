@@ -22,16 +22,32 @@ class SanitizationContext(object):
     A context for sanitizers to get more information about how to sanitize.
     """
 
-    def __init__(self, sanitizer, engine, action, query):
-        self.sanitizer = sanitizer
+    def __init__(self, engine, action, query):
         self.engine = engine
         self.action = action
         self.query = query
 
 
+class SaniChain(object):
+    """
+    I chain sanitizers together.
+    """
+
+    def __init__(self, sanitizers):
+        self.sanitizers = sanitizers
+
+
+    @defer.inlineCallbacks
+    def sanitize(self, context, data):
+        output = data
+        for sanitizer in self.sanitizers:
+            output = yield sanitizer.sanitize(context, output)
+        defer.returnValue(output)
+
+
 class Readset(object):
     """
-    A description of the fields an references that are returned from
+    A description of the fields and references that are returned from
     data-returning functions.
     """
 
@@ -47,17 +63,39 @@ class Readset(object):
         self.references = references or {}
 
 
+class Writeset(object):
+    """
+    A description of the fields that are writeable.
+    """
+
+    def __init__(self, table, writeable=None):
+        """
+
+        """
+        self.writeable = set()
+        for field in (writeable or []):
+            if type(field) in (str, unicode):
+                self.writeable.add(field)
+            else:
+                self.writeable.add(field.name)
+
+
+    def sanitize(self, context, data):
+        ret = {}
+        union = set(data) & self.writeable
+        for key in union:
+            ret[key] = data[key]
+        return ret
+
+
+
 class Sanitizer(object):
 
 
-    def __init__(self, table, writeable=None, required=None):
+    def __init__(self, table, required=None):
         """
         @param table: An SQLAlchemy Table definition.
-        @param writeable: An optional list of fields that are writeable.
-            If C{None} then no fields are writeable.
 
-            Any field with a sanitizer added through L{sanitizeField} will
-            also be considered writeable.
         @param required: An optional list of fields that are required
             when creating a record.  If C{None} then no fields are required.
             For updates, the fields may be absent, but can not be C{None}.
@@ -65,14 +103,10 @@ class Sanitizer(object):
         self.table = table
         self._sanitizers = []
         self._sanitized_fields = []
-        self._post_sanitizers = [self._filterToWriteable, self._assertRequired]
+        self._writeset = Writeset(table, table.columns)
+        self._post_sanitizers = [self._assertRequired]
         self.required = set(required or [])
-        self.writeable = set(self.required)
-        for field in (writeable or []):
-            if type(field) in (str, unicode):
-                self.writeable.add(field)
-            else:
-                self.writeable.add(field.name)
+
 
     def __get__(self, instance, cls):
         if instance is None:
@@ -115,18 +149,17 @@ class Sanitizer(object):
         def deco(func):
             self._sanitizers.append(self._fieldSanitizer(func, field))
             self._sanitized_fields.append(field)
-            self.writeable.add(field)
             return func
         return deco
 
 
     @defer.inlineCallbacks
-    def sanitize(self, engine, action, query, data, instance=None):
-        context = SanitizationContext(self, engine, action, query)
+    def sanitize(self, context, data, instance=None):
         result = data
         for func in self.sanitizeMethods():
             result = yield func(instance, context, result)
-        defer.returnValue(result)
+        stripped = yield self._writeset.sanitize(context, result)
+        defer.returnValue(stripped)
 
 
     def _fieldSanitizer(self, func, field):
@@ -139,17 +172,6 @@ class Sanitizer(object):
                 data[field] = output
                 defer.returnValue(data)
         return _sanitizer
-
-
-    def _filterToWriteable(self, instance, context, data):
-        """
-        Filter all the columns out of C{data} that aren't marked writeable.
-        """
-        result = {}
-        for k, v in data.items():
-            if k in self.writeable:
-                result[k] = v
-        return result
 
 
     def _assertRequired(self, instance, context, data):
@@ -181,9 +203,8 @@ class _BoundSanitizer(object):
         self.instance = instance
 
 
-    def sanitize(self, engine, action, query, data):
-        return self.sanitizer.sanitize(engine, action, query, data,
-                                       self.instance)        
+    def sanitize(self, context, data):
+        return self.sanitizer.sanitize(context, data, self.instance)        
 
 
     @property
@@ -209,7 +230,11 @@ class Crud(object):
     def __init__(self, readset, sanitizer=None, table_attr=None, table_map=None):
         """
         @param readset: A L{Readset} instance.
-        @param sanitizer: A L{Sanitizer} instance.
+        @param sanitizer: An object with a C{sanitize(context, data)} method
+            such as a L{Writeset}, L{Sanitizer} or L{SaniChain}.
+
+            If a list or tuple is provided, it will automatically be wrapped
+            in a L{SaniChain}.
 
         @param table_attr: If set, then the data dictionaries returned by my
             methods will contain an item with C{table_attr} key and SQL table
@@ -221,7 +246,9 @@ class Crud(object):
         self.readset = readset
         
         if sanitizer is None:
-            sanitizer = Sanitizer(readset.table).bind(None)
+            sanitizer = Sanitizer(readset.table)
+        if type(sanitizer) in (list, tuple):
+            sanitizer = SaniChain(sanitizer)
         self.sanitizer = sanitizer
 
         self.table_attr = table_attr
@@ -255,8 +282,8 @@ class Crud(object):
         attrs.update(self._fixed)
 
         # sanitize
-        sanitized = yield self.sanitizer.sanitize(
-            engine, 'create', None, attrs)
+        context = SanitizationContext(engine, 'create', None)
+        sanitized = yield self.sanitizer.sanitize(context, attrs)
 
         # do it
         table = self.sanitizer.table
@@ -282,8 +309,8 @@ class Crud(object):
             up = up.where(where)
             query = query.where(where)
 
-        sanitized = yield self.sanitizer.sanitize(
-            engine, 'update', query, attrs)       
+        context = SanitizationContext(engine, 'update', query)
+        sanitized = yield self.sanitizer.sanitize(context, attrs)
 
         if sanitized:
             up = up.values(**sanitized)
