@@ -1,6 +1,8 @@
 from twisted.trial.unittest import TestCase
 from twisted.internet import defer, reactor
 
+from mock import MagicMock
+
 from alchimia import TWISTED_STRATEGY
 
 from sqlalchemy import MetaData, Table, Column, Integer, String, DateTime
@@ -9,7 +11,8 @@ from sqlalchemy.schema import CreateTable
 from sqlalchemy.pool import StaticPool
 
 from crudset.error import TooMany, MissingRequiredFields
-from crudset.crud import Crud, Paginator, Ref, Sanitizer, Readset
+from crudset.crud import Crud, Paginator, Ref, Sanitizer, Readset, Writeset
+from crudset.crud import SanitizationContext, SaniChain
 
 from twisted.python import log
 import logging
@@ -65,14 +68,31 @@ class CrudTest(TestCase):
         defer.returnValue(engine)
 
 
+    def test_sanitizerChain(self):
+        """
+        If you pass a list of sanitizers as the sanitizer, it will be wrapped
+        in a SaniChain
+        """
+        sani = Sanitizer(families)
+        crud = Crud(Readset(families), [sani, sani])
+        self.assertTrue(isinstance(crud.sanitizer, SaniChain))
+        self.assertEqual(crud.sanitizer.sanitizers, [sani, sani])
+
+
+    def test_read_write_tablesDiffer(self):
+        """
+        The Readset and Writeset tables must be the same
+        """
+        self.assertRaises(Exception, Crud, Readset(pets), Sanitizer(families))
+
+
     @defer.inlineCallbacks
     def test_create(self):
         """
         You can create an object.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families),
-                    Sanitizer(families, ['surname']))
+        crud = Crud(Readset(families), Sanitizer(families))
 
         family = yield crud.create(engine, {'surname': 'Jones'})
         self.assertEqual(family['surname'], 'Jones')
@@ -105,7 +125,7 @@ class CrudTest(TestCase):
         engine = yield self.engine()
         called = {}
         class Foo(object):
-            sanitizer = Sanitizer(families, families.columns)
+            sanitizer = Sanitizer(families)
             @sanitizer.sanitizeData
             def sani(self, context, data):
                 called['context'] = context
@@ -124,7 +144,7 @@ class CrudTest(TestCase):
         You can fix attributes one after the other.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         crud = crud.fix({'surname': 'Jones'})
         crud = crud.fix({'location': 'Sunnyville'})
 
@@ -140,7 +160,7 @@ class CrudTest(TestCase):
         by default.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         yield crud.create(engine, {'surname': '13'})
 
         fams = yield crud.fetch(engine)
@@ -154,7 +174,7 @@ class CrudTest(TestCase):
         Fixed attributes restrict the fetched objects.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         yield crud.create(engine, {'surname': 'Jones'})
 
         crud2 = crud.fix({'surname': 'Johnson'})
@@ -169,7 +189,7 @@ class CrudTest(TestCase):
         You can limit even further.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
 
         for i in xrange(10):
             yield crud.create(engine, {'surname': 'Family %d' % (i,)})
@@ -185,7 +205,7 @@ class CrudTest(TestCase):
         You can limit the set of readable fields.
         """
         engine = yield self.engine()
-        crud1 = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud1 = Crud(Readset(families), Sanitizer(families))
         yield crud1.create(engine, {'surname': 'Johnson', 'location': 'Alabama'})
         
         crud2 = Crud(Readset(families, ['surname']))
@@ -200,7 +220,7 @@ class CrudTest(TestCase):
         You can limit the number of returned records.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         for i in xrange(10):
             yield crud.create(engine, {'surname': 'Johnson %d' % (i,)})
 
@@ -214,7 +234,7 @@ class CrudTest(TestCase):
         You can specify an ordering
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         for i in xrange(10):
             yield crud.create(engine, {'surname': 'sodkevoiuans'[i]})
         
@@ -229,7 +249,7 @@ class CrudTest(TestCase):
         You can offset the limit.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         fams = []
         for i in xrange(10):
             fam = yield crud.create(engine, {'surname': 'abcdefghijklmnop'[i]})
@@ -245,7 +265,7 @@ class CrudTest(TestCase):
         You can get just one item.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         fam = yield crud.create(engine, {'surname': 'hey'})
         one = yield crud.getOne(engine)
         self.assertEqual(one, fam)
@@ -257,7 +277,7 @@ class CrudTest(TestCase):
         You can get one by a where clause
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         fam1 = yield crud.create(engine, {'surname': 'bob'})
         yield crud.create(engine, {'surname': 'Jones'})
         one = yield crud.getOne(engine, families.c.surname == 'bob')
@@ -307,7 +327,7 @@ class CrudTest(TestCase):
         You can count filtered records.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         for i in xrange(14):
             yield crud.create(engine, {'surname': str(i)})
 
@@ -321,7 +341,7 @@ class CrudTest(TestCase):
         The count is restricted by fixed attributes.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         yield crud.create(engine, {'surname': 'Jones'})
         yield crud.create(engine, {'surname': 'Arnold'})
 
@@ -336,7 +356,7 @@ class CrudTest(TestCase):
         You can update sets.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         yield crud.create(engine, {'surname': 'Jones'})
         fams = yield crud.update(engine, {'surname': 'Jamison'})
         self.assertEqual(len(fams), 1)
@@ -349,7 +369,7 @@ class CrudTest(TestCase):
         Fixed attributes are part of the update.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         yield crud.create(engine, {'surname': 'Jones', 'location': 'anvilania'})
         yield crud.create(engine, {'surname': 'James', 'location': 'gotham'})
 
@@ -369,7 +389,7 @@ class CrudTest(TestCase):
         You aren't allowed to update the fixed attributes.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         yield crud.create(engine, {'surname': 'Jones', 'location': 'bar'})
 
         crud2 = crud.fix({'surname': 'Jones'})
@@ -385,7 +405,7 @@ class CrudTest(TestCase):
         It's a no-op to update nothing.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         yield crud.create(engine, {'surname': 'Jones'})
         fams = yield crud.update(engine, {})
         fam = fams[0]
@@ -398,7 +418,7 @@ class CrudTest(TestCase):
         All the fixed attributes should be taken into consideration.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(pets), Sanitizer(pets, pets.columns))
+        crud = Crud(Readset(pets), Sanitizer(pets))
         yield crud.create(engine, {'name': 'Jones', 'family_id': 1})
         yield crud.create(engine, {'name': 'James', 'family_id': 20})
         yield crud.create(engine, {'name': 'Jones', 'family_id': 20})
@@ -427,7 +447,7 @@ class CrudTest(TestCase):
         You can filter the update by expression, too.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         yield crud.create(engine, {'surname': 'Jones', 'location': 'anvilania'})
         yield crud.create(engine, {'surname': 'James', 'location': 'gotham'})
 
@@ -450,7 +470,7 @@ class CrudTest(TestCase):
         engine = yield self.engine()
         called = []
         class Foo(object):
-            sanitizer = Sanitizer(families, families.columns)
+            sanitizer = Sanitizer(families)
             @sanitizer.sanitizeData
             def sani(self, context, data):
                 called.append(context)
@@ -477,7 +497,7 @@ class CrudTest(TestCase):
         engine = yield self.engine()
         called = []
         class Foo(object):
-            sanitizer = Sanitizer(families, ['surname', 'location'])
+            sanitizer = Sanitizer(families)
             @sanitizer.sanitizeData
             def sani(self, context, data):
                 called.append(context)
@@ -514,7 +534,7 @@ class CrudTest(TestCase):
         The fixed variables influence what is deleted.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         yield crud.create(engine, {'surname': 'Jones'})
         crud2 = crud.fix({'surname': 'Arnold'})
         yield crud2.create(engine, {})
@@ -531,7 +551,7 @@ class CrudTest(TestCase):
         You can filter by expression.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        crud = Crud(Readset(families), Sanitizer(families))
         yield crud.create(engine, {'surname': 'Jones'})
         yield crud.create(engine, {'surname': 'Arnold'})
         yield crud.delete(engine, families.c.surname == 'Arnold')
@@ -550,7 +570,7 @@ class CrudTest(TestCase):
         crud = Crud(Readset(people, references={
             'family': Ref(Readset(families),
                           people.c.family_id == families.c.id),
-        }), Sanitizer(people, people.columns))
+        }), Sanitizer(people))
 
         yield crud.create(engine, {'name': 'Sam'})
         peeps = yield crud.fetch(engine, )
@@ -566,12 +586,12 @@ class CrudTest(TestCase):
         You can nest objects by reference.
         """
         engine = yield self.engine()
-        fam_crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        fam_crud = Crud(Readset(families), Sanitizer(families))
         family = yield fam_crud.create(engine, {'surname': 'Jones'})
 
         crud = Crud(Readset(people, references={
             'family': Ref(Readset(families), people.c.family_id == families.c.id),
-        }), Sanitizer(people, people.columns))
+        }), Sanitizer(people))
         sam = yield crud.create(engine, {'name': 'Sam', 'family_id': family['id']})
         self.assertEqual(sam['family'], family)
 
@@ -582,10 +602,10 @@ class CrudTest(TestCase):
         You can have multiple references.
         """
         engine = yield self.engine()
-        fam_crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        fam_crud = Crud(Readset(families), Sanitizer(families))
         johnson = yield fam_crud.create(engine, {'surname': 'Johnson'})
 
-        person_crud = Crud(Readset(people), Sanitizer(people, people.columns))
+        person_crud = Crud(Readset(people), Sanitizer(people))
         john = yield person_crud.create(engine, {
             'family_id': johnson['id'],
             'name': 'John',
@@ -594,7 +614,7 @@ class CrudTest(TestCase):
         pets_crud = Crud(Readset(pets, references={
             'family': Ref(Readset(families), pets.c.family_id == families.c.id),
             'owner': Ref(Readset(people), pets.c.owner_id == people.c.id),
-        }), Sanitizer(pets, pets.columns))
+        }), Sanitizer(pets))
 
         cat = yield pets_crud.create(engine, {
             'family_id': johnson['id'],
@@ -650,7 +670,7 @@ class CrudTest(TestCase):
 
         crud = Crud(Readset(people, references={
             'family': Ref(Readset(families), people.c.family_id == families.c.id),
-        }), Sanitizer(people, people.columns), table_attr='foo')
+        }), Sanitizer(people), table_attr='foo')
         sam = yield crud.create(engine, {'name': 'Sam', 'family_id': family['id']})
         self.assertEqual(sam['foo'], 'people')
         self.assertEqual(sam['family']['foo'], 'family')
@@ -662,14 +682,14 @@ class CrudTest(TestCase):
         You can map table names to something else.
         """
         engine = yield self.engine()
-        fam_crud = Crud(Readset(families), Sanitizer(families, families.columns))
+        fam_crud = Crud(Readset(families), Sanitizer(families))
         family = yield fam_crud.create(engine, {'surname': 'Jones'})
 
         crud = Crud(
             Readset(people, references={
                 'family': Ref(Readset(families), people.c.family_id == families.c.id),
             }),
-            Sanitizer(people, people.columns),
+            Sanitizer(people),
             table_attr='foo',
             table_map={
                 people: 'Person',
@@ -728,6 +748,44 @@ class ReadsetTest(TestCase):
 
 
 
+class WritesetTest(TestCase):
+
+
+    @defer.inlineCallbacks
+    def test_default(self):
+        """
+        By default, no fields are writeable.
+        """
+        w = Writeset(families)
+        self.assertEqual(w.writeable, set([]))
+
+        data = {'foo': 'bar', 'surname': 'Jones'}
+        output = yield w.sanitize('context', data)
+        self.assertEqual(output, {}, "Should filter out all fields")
+
+
+    @defer.inlineCallbacks
+    def test_writeable(self):
+        """
+        Setting a list of writeable fields will let fields pass through.
+        """
+        w = Writeset(families, ['surname'])
+        self.assertEqual(w.writeable, set(['surname']))
+
+        data = {'foo': 'bar', 'surname': 'Jones', 'location': 'Nowhere'}
+        output = yield w.sanitize('context', data)
+        self.assertEqual(output, {'surname': 'Jones'}, "Surname is writeable")
+
+
+    def test_writeable_asColumns(self):
+        """
+        You can specify the writeable fields as SQLAlchemy columns.
+        """
+        w = Writeset(families, [families.c.surname])
+        self.assertEqual(w.writeable, set(['surname']))
+
+
+
 class PaginatorTest(TestCase):
 
     timeout = 10
@@ -772,7 +830,7 @@ class PaginatorTest(TestCase):
         You can paginate filtered results, too
         """
         engine = yield self.engine()
-        crud = Crud(Readset(pets), Sanitizer(pets, pets.columns))
+        crud = Crud(Readset(pets), Sanitizer(pets))
         pager = Paginator(crud, page_size=3, order=pets.c.id)
 
         things = []
@@ -817,7 +875,7 @@ class PaginatorTest(TestCase):
         The page count should be accurate for all numbers.
         """
         engine = yield self.engine()
-        crud = Crud(Readset(pets), Sanitizer(pets, pets.columns))
+        crud = Crud(Readset(pets), Sanitizer(pets))
         pager = Paginator(crud, page_size=3, order=pets.c.id)
         
         count = yield pager.pageCount(engine)
@@ -840,6 +898,8 @@ class PaginatorTest(TestCase):
 
 class SanitizerTest(TestCase):
 
+    create_context = SanitizationContext(None, 'create', None)
+    update_context = SanitizationContext(None, 'update', None)
 
     @defer.inlineCallbacks
     def test_default(self):
@@ -850,34 +910,20 @@ class SanitizerTest(TestCase):
             sanitizer = Sanitizer(pets)
         sanitizer = Foo().sanitizer
         
-        data = {'foo': 'bar', 'id': 12, 'family_id': 19, 'owner_id': -1,
-                'name': 'bob'}
-        output = yield sanitizer.sanitize('engine', 'update', 'query', data)
-        self.assertEqual(output, {})
-
-
-    @defer.inlineCallbacks
-    def test_writeable(self):
-        """
-        You can specify a list of writeable fields.  Non-writeable fields will
-        be removed from the sanitized data.
-        """
-        class Foo(object):
-            sanitizer = Sanitizer(pets, writeable=['name'])
-        sanitizer = Foo().sanitizer
-        
-        data = {'foo': 'bar', 'id': 12, 'family_id': 19, 'owner_id': -1,
-                'name': 'bob'}
-        output = yield sanitizer.sanitize('engine', 'update', 'query', data)
-        self.assertEqual(output, {'name': 'bob'})
-
-
-    def test_writeable_asColumns(self):
-        """
-        You can specify the list of writeable fields as SQLAlchemy columns.
-        """
-        sanitizer = Sanitizer(pets, writeable=[pets.c.name, pets.c.family_id])
-        self.assertEqual(set(sanitizer.writeable), set(['name', 'family_id']))
+        data = {
+            'foo': 'bar',
+            'id': 12,
+            'family_id': 19,
+            'owner_id': -1,
+            'name': 'bob',
+        }
+        output = yield sanitizer.sanitize(self.create_context, data)
+        self.assertEqual(output, {
+            'id': 12,
+            'family_id': 19,
+            'owner_id': -1,
+            'name': 'bob',
+        }, "Should pass-thru on every legitimate column by default")
 
 
     @defer.inlineCallbacks
@@ -887,21 +933,14 @@ class SanitizerTest(TestCase):
         """
         sanitizer = Sanitizer(pets, required=['name'])
         self.assertEqual(set(sanitizer.required), set(['name']))
-        self.assertIn('name', sanitizer.writeable, "Required fields are "
-                      "writeable")
 
-        log.msg('before first')
-        yield self.assertFailure(sanitizer.sanitize(
-            'engine', 'create', 'query', {}), MissingRequiredFields)
-
-        log.msg('before second')
-        yield self.assertFailure(sanitizer.sanitize(
-            'engine', 'create', 'query', {'name': None}),
+        yield self.assertFailure(sanitizer.sanitize(self.create_context, {}),
             MissingRequiredFields)
 
-        log.msg('before third')
-        output = yield sanitizer.sanitize('engine', 'create', 'query', {
-            'name': 'bob'})
+        yield self.assertFailure(sanitizer.sanitize(self.create_context, {'name': None}),
+            MissingRequiredFields)
+
+        output = yield sanitizer.sanitize(self.create_context, {'name': 'bob'})
         self.assertEqual(output, {'name': 'bob'})
 
 
@@ -913,11 +952,12 @@ class SanitizerTest(TestCase):
         """
         sanitizer = Sanitizer(pets, required=['name'])
         self.assertEqual(set(sanitizer.required), set(['name']))
-        output = yield sanitizer.sanitize('engine', 'update', 'query', {})
+        output = yield sanitizer.sanitize(self.update_context, {})
         self.assertEqual(output, {})
 
-        yield self.assertFailure(sanitizer.sanitize(
-            'engine', 'update', 'query', {'name': None}), MissingRequiredFields)
+        yield self.assertFailure(sanitizer.sanitize(self.update_context,
+            {'name': None}),
+            MissingRequiredFields)
 
 
     @defer.inlineCallbacks
@@ -927,14 +967,11 @@ class SanitizerTest(TestCase):
         """
         called = {}
         class Foo(object):
-            sanitizer = Sanitizer(pets, writeable=['name'])
+            sanitizer = Sanitizer(pets)
 
             @sanitizer.sanitizeData
             def myFunc(self, context, data):
-                called['engine'] = context.engine
-                called['action'] = context.action
-                called['sanitizer'] = context.sanitizer
-                called['query'] = context.query
+                called['context'] = context
                 called['data'] = data
                 return {'name': 'john'}
 
@@ -944,12 +981,9 @@ class SanitizerTest(TestCase):
             'foo': 'bar',
             'name': 'bob',
         }
-        output = yield sanitizer.sanitize('engine', 'update', 'query', indata)
+        output = yield sanitizer.sanitize(self.create_context, indata)
         self.assertEqual(output, {'name': 'john'})
-        self.assertEqual(called['engine'], 'engine')
-        self.assertEqual(called['action'], 'update')
-        self.assertEqual(called['sanitizer'], Foo.sanitizer)
-        self.assertEqual(called['query'], 'query')
+        self.assertEqual(called['context'], self.create_context)
         self.assertEqual(called['data'], indata)
 
 
@@ -964,21 +998,17 @@ class SanitizerTest(TestCase):
 
             @sanitizer.sanitizeField('name')
             def name(self, context, data, field):
-                called['engine'] = context.engine
-                called['action'] = context.action
+                called['context'] = context
                 called['data'] = data.copy()
                 called['field'] = field
                 return 'new name'
 
         sanitizer = Foo().sanitizer
-        self.assertEqual(set(sanitizer.writeable), set(['name']),
-                         "Should add sanitized fields to writeable list")
 
         indata = {'name': 'sam'}
-        output = yield sanitizer.sanitize('engine', 'update', 'query', indata)
+        output = yield sanitizer.sanitize(self.create_context, indata)
         self.assertEqual(output, {'name': 'new name'})
-        self.assertEqual(called['engine'], 'engine')
-        self.assertEqual(called['action'], 'update')
+        self.assertEqual(called['context'], self.create_context)
         self.assertEqual(called['data'], {'name': 'sam'})
         self.assertEqual(called['field'], 'name')
 
@@ -1005,7 +1035,7 @@ class SanitizerTest(TestCase):
         sanitizer = Foo().sanitizer
 
         indata = {'name': 'sam', 'family_id': 12}
-        output = yield sanitizer.sanitize('engine', 'update', 'query', indata)
+        output = yield sanitizer.sanitize(self.create_context, indata)
         self.assertEqual(output, {'name': 'sam', 'family_id': 12})
         self.assertEqual(called, ['name', 'family_id'], "Should be called "
                          "in the order added")
@@ -1019,7 +1049,7 @@ class SanitizerTest(TestCase):
         """
         called = []
         class Foo(object):
-            sanitizer = Sanitizer(pets, ['family_id', 'name'])
+            sanitizer = Sanitizer(pets)
 
             @sanitizer.sanitizeField('name')
             def name(self, context, data, field):
@@ -1029,7 +1059,7 @@ class SanitizerTest(TestCase):
         sanitizer = Foo().sanitizer
 
         indata = {'family_id': 12}
-        output = yield sanitizer.sanitize('engine', 'update', 'query', indata)
+        output = yield sanitizer.sanitize(self.create_context, indata)
         self.assertEqual(output, {'family_id': 12})
         self.assertEqual(called, [], "Should not call name validator since "
                          "name wasn't present")
@@ -1050,13 +1080,41 @@ class SanitizerTest(TestCase):
 
 
 
+class SaniChainTest(TestCase):
 
 
+    @defer.inlineCallbacks
+    def test_calls_all(self):
+        """
+        The chain will pass the data through each item in the sanitization
+        chain.
+        """
+        sani1 = MagicMock()
+        sani1.table = 'foo'
+        sani1.sanitize.return_value = {'foo': 'bar'}
+        sani2 = MagicMock()
+        sani2.table = 'foo'
+        sani2.sanitize.return_value = defer.succeed({'hey': 'ho'})
+
+        chain = SaniChain([sani1, sani2])
+        self.assertEqual(chain.table, 'foo')
+        data = {'1': '2'}
+        context = SanitizationContext(None, None, None)
+        output = yield chain.sanitize(context, data)
+
+        sani1.sanitize.assert_called_once_with(context, data)
+        sani2.sanitize.assert_called_once_with(context, {'foo': 'bar'})
+        self.assertEqual(output, {'hey': 'ho'})
 
 
-
-
-
-
+    def test_differentTable(self):
+        """
+        Sanitizers must have the same table.
+        """
+        sani1 = MagicMock()
+        sani1.table = 'foo'
+        sani2 = MagicMock()
+        sani2.table = 'bar'
+        self.assertRaises(Exception, SaniChain, [sani1, sani2])
 
 
