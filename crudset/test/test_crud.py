@@ -1182,7 +1182,7 @@ class crudFromSpecTest(TestCase):
             ]
         crud = crudFromSpec(Base)
         self.assertEqual(crud.readset.readable, set(['id']))
-        self.assertWriteable(crud, ['id'])
+        self.assertWriteable(crud, [])
 
 
     def test_writeable(self):
@@ -1197,6 +1197,18 @@ class crudFromSpecTest(TestCase):
         crud = crudFromSpec(Base)
         self.assertEqual(crud.readset.readable_columns, list(families.columns))
         self.assertWriteable(crud, ['id'])
+
+
+    def test_writeable_all(self):
+        """
+        You can say that all fields are writeable.
+        """
+        class Base:
+            table = families
+            writeable = 'ALL'
+        crud = crudFromSpec(Base)
+        self.assertEqual(crud.readset.readable_columns, list(families.columns))
+        self.assertWriteable(crud, [x.name for x in families.columns])
 
 
     def test_references(self):

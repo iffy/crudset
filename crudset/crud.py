@@ -574,17 +574,24 @@ class Paginator(object):
 def crudFromSpec(cls, table_attr=None, table_map=None):
     """
     Create a Crud from a specification class.  See README.md for an example.
+
+    If C{readable} is not given, all fields will be readable.
+    If C{writeable} is not given, no fields will be writeable.
     """
+    table = cls.table
     readable = getattr(cls, 'readable', None)
-    writeable = getattr(cls, 'writeable', readable)
+    writeable = getattr(cls, 'writeable', None)
     references = getattr(cls, 'references', None)
     sanitizer = getattr(cls, 'sanitizer', None)
+
+    if writeable == 'ALL':
+        writeable = [x.name for x in table.columns]
 
     sanitizers = Writeset(cls.table, writeable)
     if sanitizer:
         sanitizers = [sanitizer, sanitizers]
     return Crud(
-        Readset(cls.table, readable, references),
+        Readset(table, readable, references),
         sanitizers,
         table_attr=table_attr,
         table_map=table_map)
