@@ -6,45 +6,41 @@
 
 A tool for automating the creation of CRUDs.
 
-## Read/Write ##
 
-Use a `Readset` to specify what fields are read.  Use a `Writeset` to specify
-which fields can be updated.
+## Defining Cruds ##
+
+### Basic ###
 
 <!-- test -->
 
 ```python
-from crudset import Crud, Readset, Writeset
+from crudset import crudFromSpec
 
 from twisted.internet import defer, task
 
 from sqlalchemy import MetaData, Table, Column, Integer, String, create_engine
-from sqlalchemy import Boolean
 from sqlalchemy.schema import CreateTable
 from sqlalchemy.pool import StaticPool
 
 from alchimia import TWISTED_STRATEGY
 
+# SQLAlchemy table definition
 metadata = MetaData()
 people = Table('people', metadata,
     Column('id', Integer, primary_key=True),
-    Column('is_soylent_green', Boolean),
     Column('name', String),
     Column('pay_grade', Integer),
 )
 
-# The public crud will return only the id and name fields and will allow
-# writing of name and pay_grade.
-public_crud = Crud(
-    Readset(people, ['id', 'name']),
-    Writeset(people, ['name', 'pay_grade']))
 
-# The private crud will return all fields and allows writing all fields.
-private_crud = Crud(
-    Readset(people),
-    Writeset(people, people.columns))
+# Crud specification
+class PeopleSpec:
+    table = people
+    writeable = ['name', 'pay_grade']
+people_crud = crudFromSpec(PeopleSpec)
 
 
+# Use it
 @defer.inlineCallbacks
 def main(reactor):
     engine = create_engine('sqlite://',
@@ -54,65 +50,104 @@ def main(reactor):
                            poolclass=StaticPool)
     yield engine.execute(CreateTable(people))
 
-    # private
-    private_joe = yield private_crud.create(engine, {
+    # create
+    joe = yield people_crud.create(engine, {
         'name': 'Joe',
         'pay_grade': 90,
     })
-    assert 'id' in private_joe
-    assert 'name' in private_joe
-    assert 'pay_grade' in private_joe
-    assert 'is_soylent_green' in private_joe
 
-    # public
-    everyone = yield public_crud.fetch(engine)
-    public_joe = everyone[0]
-    assert 'pay_grade' not in public_joe, public_joe
-    assert 'is_soylent_green' not in public_joe, public_joe
-    assert 'id' in public_joe, public_joe
-    assert 'name' in public_joe, public_joe
+    assert joe['name'] == 'Joe', joe
+    assert joe['pay_grade'] == 90, joe
 
+    # update
+    new_joes = yield people_crud.fix({'id': joe['id']}).update(engine, {
+        'name': 'Joseph',
+    })
+
+    assert new_joes[0]['name'] == 'Joseph', new_joes
+
+    # fetch
+    all_the_joes = yield people_crud.fetch(engine)
+
+    assert all_the_joes == new_joes, all_the_joes
+
+    # delete
+    yield people_crud.delete(engine)
 
 task.react(main, [])
 ```
 
-## Sanitization ##
 
-Use a `Sanitizer` to restrict/modify how fields can be written.
+### Kitchen sink ###
 
 <!-- test -->
 
 ```python
-from crudset import Crud, Readset, Sanitizer
+from crudset import crudFromSpec, Ref, Readset, Sanitizer
 
 from twisted.internet import defer, task
 
 from sqlalchemy import MetaData, Table, Column, Integer, String, create_engine
-from sqlalchemy import Boolean
 from sqlalchemy.schema import CreateTable
 from sqlalchemy.pool import StaticPool
 
 from alchimia import TWISTED_STRATEGY
 
+# SQLAlchemy table definition
 metadata = MetaData()
 people = Table('people', metadata,
     Column('id', Integer, primary_key=True),
-    Column('is_soylent_green', Boolean),
     Column('name', String),
-    Column('pay_grade', Integer),
+)
+pets = Table('pet', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String),
+    Column('owner_id', Integer),
 )
 
-class EveryoneIsSoylent(object):
-    sanitizer = Sanitizer(people)
+
+# Crud specification
+class PetSpec:
+    table = pets
+    readable = [
+        'name',
+        'owner_id',
+    ]
+    writeable = [
+        'name',
+        'owner_id',
+    ]
+    references = {
+        'owner': Ref(
+            Readset(people, ['name']),
+            people.c.id == pets.c.owner_id,
+        )
+    }
+
+    sanitizer = Sanitizer(table)
 
     @sanitizer.sanitizeData
-    def data(self, context, data):
-        data['is_soylent_green'] = True
+    def defaultName(self, context, data):
+        if 'name' not in data:
+            data['name'] = 'Fido the Fish'
         return data
 
-crud = Crud(Readset(people), EveryoneIsSoylent().sanitizer)
+    @sanitizer.sanitizeField('name')
+    def titleCaseNames(self, context, data, field_name):
+        return data[field_name].title()
+
+pet_crud = crudFromSpec(PetSpec, table_attr='type', table_map={
+    pets: 'Pet',
+    people: 'Person',
+})
+
+class PeopleSpec:
+    table = people
+    writeable = ['name']
+people_crud = crudFromSpec(PeopleSpec)
 
 
+# Use it
 @defer.inlineCallbacks
 def main(reactor):
     engine = create_engine('sqlite://',
@@ -121,20 +156,25 @@ def main(reactor):
                            strategy=TWISTED_STRATEGY,
                            poolclass=StaticPool)
     yield engine.execute(CreateTable(people))
+    yield engine.execute(CreateTable(pets))
 
-    joe = yield crud.create(engine, {
+    # create a person
+    joe = yield people_crud.create(engine, {
         'name': 'Joe',
-        'pay_grade': 90,
     })
-    assert joe['is_soylent_green'] == True, joe
-    
-    peeps = yield crud.update(engine, {'is_soylent_green': False})
-    assert peeps[0]['is_soylent_green'] == True, peeps
 
+    # create a pet
+    molly = yield pet_crud.create(engine, {
+        'name': 'Molly',
+        'owner_id': joe['id'],
+    })
 
+    assert molly['name'] == 'Molly'
+    assert molly['owner']['name'] == 'Joe', repr(molly)
 
 task.react(main, [])
 ```
+
 
 
 ## Fixed values ##
