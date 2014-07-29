@@ -34,8 +34,10 @@ class ExampleTest(TestCase):
         def check((stdout, stderr, code)):
             log.msg(name)
             log.msg(filepath.path)
-            log.msg('stdout: %r' % (stdout,))
-            log.msg('stderr: %r' % (stderr,))
+            if code != 0:
+                log.msg('code: %s' % (filepath.getContent(),))
+            log.msg('stdout: %s' % (stdout,))
+            log.msg('stderr: %s' % (stderr,))
             log.msg('exit: %r' % (code,))
             if code != 0:
                 raise Exception('\n' + '-'*30 + '\n' + name + ':\n' + stderr)

@@ -2,7 +2,7 @@ from twisted.internet import defer
 
 from sqlalchemy.sql import select, and_
 
-from crudset.error import TooMany
+from crudset.error import TooMany, MissingRequiredFields
 
 
 
@@ -16,10 +16,56 @@ class Ref(object):
         self.join = join
 
 
+    def __repr__(self):
+        return 'Ref(%r, %r)' % (self.readset, self.join)
+
+
+
+class SanitizationContext(object):
+    """
+    A context for sanitizers to get more information about how to sanitize.
+    """
+
+    def __init__(self, engine, action, query):
+        self.engine = engine
+        self.action = action
+        self.query = query
+
+
+    def __repr__(self):
+        return 'SanitizationContext(%r, %r, %r)' % (
+            self.engine, self.action, self.query)
+
+
+class SaniChain(object):
+    """
+    I chain sanitizers together.
+    """
+
+    def __init__(self, sanitizers):
+        self.sanitizers = sanitizers
+        tables = set([x.table for x in sanitizers])
+        if len(tables) != 1:
+            raise TypeError("Chained sanitizers must have the same table: %r" % (
+                            tables,))
+        self.table = tables.pop()
+
+
+    def __repr__(self):
+        return 'SaniChain(%r, table=%r)' % (self.sanitizers, self.table)
+
+
+    @defer.inlineCallbacks
+    def sanitize(self, context, data):
+        output = data
+        for sanitizer in self.sanitizers:
+            output = yield sanitizer.sanitize(context, output)
+        defer.returnValue(output)
+
 
 class Readset(object):
     """
-    A description of the fields an references that are returned from
+    A description of the fields and references that are returned from
     data-returning functions.
     """
 
@@ -35,18 +81,64 @@ class Readset(object):
         self.references = references or {}
 
 
+    def __repr__(self):
+        return 'Readset(%r, %r, %r)' % (
+            self.table, list(self.readable), self.references)
+
+
+class Writeset(object):
+    """
+    A description of the fields that are writeable.
+    """
+
+    def __init__(self, table, writeable=None):
+        """
+
+        """
+        self.table = table
+        self.writeable = set()
+        for field in (writeable or []):
+            if type(field) in (str, unicode):
+                self.writeable.add(field)
+            else:
+                self.writeable.add(field.name)
+
+
+    def __repr__(self):
+        return 'Writeset(%r, %r)' % (self.table, self.writeable)
+
+
+    def sanitize(self, context, data):
+        ret = {}
+        union = set(data) & self.writeable
+        for key in union:
+            ret[key] = data[key]
+        return ret
+
+
+
 class Sanitizer(object):
 
 
-    def __init__(self, table, writeable=None):
+    def __init__(self, table, required=None):
+        """
+        @param table: An SQLAlchemy Table definition.
+
+        @param required: An optional list of fields that are required
+            when creating a record.  If C{None} then no fields are required.
+            For updates, the fields may be absent, but can not be C{None}.
+        """
         self.table = table
         self._sanitizers = []
         self._sanitized_fields = []
-        self._post_sanitizers = [self._filterToWriteable]
-        if writeable is None:
-            self.writeable_columns = frozenset([x.name for x in table.columns])
-        else:
-            self.writeable_columns = frozenset(writeable)
+        self._writeset = Writeset(table, table.columns)
+        self._post_sanitizers = [self._assertRequired]
+        self.required = set(required or [])
+
+
+    def __repr__(self):
+        return 'Sanitizer(%r, %r)' % (self.table, self.required)
+
 
     def __get__(self, instance, cls):
         if instance is None:
@@ -94,35 +186,44 @@ class Sanitizer(object):
 
 
     @defer.inlineCallbacks
-    def sanitize(self, engine, action, data, instance=None):
-        context = {}
+    def sanitize(self, context, data, instance=None):
         result = data
         for func in self.sanitizeMethods():
-            result = yield func(instance, engine, action, result, context)
-        defer.returnValue(result)
+            result = yield func(instance, context, result)
+        stripped = yield self._writeset.sanitize(context, result)
+        defer.returnValue(stripped)
 
 
     def _fieldSanitizer(self, func, field):
         @defer.inlineCallbacks
-        def _sanitizer(instance, engine, action, data, context):
+        def _sanitizer(instance, context, data):
             if field not in data:
                 defer.returnValue(data)
             else:
-                output = yield func(instance, engine, action, data, field, context)
+                output = yield func(instance, context, data, field)
                 data[field] = output
                 defer.returnValue(data)
         return _sanitizer
 
 
-    def _filterToWriteable(self, instance, engine, action, data, context):
+    def _assertRequired(self, instance, context, data):
         """
-        Filter all the columns out of C{data} that aren't marked writeable.
+        Raise an exception if there are required fields missing.
         """
-        result = {}
-        for k, v in data.items():
-            if k in self.writeable_columns:
-                result[k] = v
-        return result
+        # check for presence
+        if context.action == 'create':
+            missing = set(self.required) - set(data)
+            if missing:
+                raise MissingRequiredFields('Missing required fields: %s' % (
+                    ', '.join(missing)))
+
+        # check for nullness
+        for required_field in self.required:
+            if required_field in data and data[required_field] is None:
+                raise MissingRequiredFields('Required field is null: %s' % (
+                    required_field,))
+        return data
+
 
 
 
@@ -134,8 +235,12 @@ class _BoundSanitizer(object):
         self.instance = instance
 
 
-    def sanitize(self, engine, action, data):
-        return self.sanitizer.sanitize(engine, action, data, self.instance)        
+    def __repr__(self):
+        return '_BoundSanitizer(%r, %r)' % (self.sanitizer, self.instance)
+
+
+    def sanitize(self, context, data):
+        return self.sanitizer.sanitize(context, data, self.instance)        
 
 
     @property
@@ -156,7 +261,11 @@ class Crud(object):
     def __init__(self, readset, sanitizer=None, table_attr=None, table_map=None):
         """
         @param readset: A L{Readset} instance.
-        @param sanitizer: A L{Sanitizer} instance.
+        @param sanitizer: An object with a C{sanitize(context, data)} method
+            such as a L{Writeset}, L{Sanitizer} or L{SaniChain}.
+
+            If a list or tuple is provided, it will automatically be wrapped
+            in a L{SaniChain}.
 
         @param table_attr: If set, then the data dictionaries returned by my
             methods will contain an item with C{table_attr} key and SQL table
@@ -168,14 +277,25 @@ class Crud(object):
         self.readset = readset
         
         if sanitizer is None:
-            sanitizer = Sanitizer(readset.table).bind(None)
+            sanitizer = Sanitizer(readset.table)
+        if type(sanitizer) in (list, tuple):
+            sanitizer = SaniChain(sanitizer)
         self.sanitizer = sanitizer
+
+        if self.sanitizer.table != self.readset.table:
+            raise TypeError("Readset and sanitizer/writeset are for different"
+                " tables: %r %r" % (self.readset, self.sanitizer))
 
         self.table_attr = table_attr
         self.table_map = table_map or {}
         self._fixed = {}
         self._select_columns = []
         self._base_query = None
+
+
+    def __repr__(self):
+        return 'Crud(%r, %r, table_attr=%r, table_map=%r)' % (
+            self.readset, self.sanitizer, self.table_attr, self.table_map)
 
 
     def fix(self, attrs):
@@ -202,7 +322,8 @@ class Crud(object):
         attrs.update(self._fixed)
 
         # sanitize
-        sanitized = yield self.sanitizer.sanitize(engine, 'create', attrs)
+        context = SanitizationContext(engine, 'create', None)
+        sanitized = yield self.sanitizer.sanitize(context, attrs)
 
         # do it
         table = self.sanitizer.table
@@ -217,17 +338,19 @@ class Crud(object):
         """
         Update a set of records.
         """
-        up = self.sanitizer.table.update()
-        up = self._applyConstraints(up)
+        up = self._applyConstraints(self.sanitizer.table.update())
 
         # you can't update fixed attributes
         for attr in self._fixed:
             attrs.pop(attr, None)
 
-        sanitized = yield self.sanitizer.sanitize(engine, 'update', attrs)
-
+        query = self._applyConstraints(self.sanitizer.table.select())
         if where is not None:
             up = up.where(where)
+            query = query.where(where)
+
+        context = SanitizationContext(engine, 'update', query)
+        sanitized = yield self.sanitizer.sanitize(context, attrs)
 
         if sanitized:
             up = up.values(**sanitized)
@@ -414,6 +537,11 @@ class Paginator(object):
         self.crud = crud
         self.page_size = page_size
         self.order = order
+
+
+    def __repr__(self):
+        return 'Paginator(%r, %r, %r)' % (
+            self.crud, self.page_size, self.order)
 
 
     def page(self, engine, number, where=None):
