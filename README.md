@@ -6,6 +6,76 @@
 
 A tool for automating the creation of CRUDs.
 
+## Basic example ##
+
+<!-- test -->
+
+```python
+from crudset import crudFromSpec
+
+from twisted.internet import defer, task
+
+from sqlalchemy import MetaData, Table, Column, Integer, String, create_engine
+from sqlalchemy import Boolean
+from sqlalchemy.schema import CreateTable
+from sqlalchemy.pool import StaticPool
+
+from alchimia import TWISTED_STRATEGY
+
+# SQLAlchemy table definition
+metadata = MetaData()
+people = Table('people', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String),
+    Column('pay_grade', Integer),
+)
+
+
+# Crud specification
+class PeopleSpec:
+    table = people
+people_crud = crudFromSpec(PeopleSpec)
+
+
+# Using the created Crud
+@defer.inlineCallbacks
+def main(reactor):
+    engine = create_engine('sqlite://',
+                           connect_args={'check_same_thread': False},
+                           reactor=reactor,
+                           strategy=TWISTED_STRATEGY,
+                           poolclass=StaticPool)
+    yield engine.execute(CreateTable(people))
+
+    # create
+    joe = yield people_crud.create(engine, {
+        'name': 'Joe',
+        'pay_grade': 90,
+    })
+
+    # update
+    new_joe = yield people_crud.fix({'id': joe['id']}).update(engine, {
+        'name': 'Joseph',
+    })
+
+    # fetch
+    same_joe = yield people_crud.fetch(engine)
+
+    # delete
+    yield people_crud.delete(engine)
+
+task.reac(main, [])
+```
+
+
+## Kitchen sink example ##
+
+<!-- test -->
+
+```python
+```
+
+
 ## Read ##
 
 Use a `Readset` to specify what fields are read.

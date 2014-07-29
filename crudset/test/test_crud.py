@@ -9,7 +9,7 @@ from sqlalchemy.schema import CreateTable
 from sqlalchemy.pool import StaticPool
 
 from crudset.error import TooMany
-from crudset.crud import Crud, Paginator, Ref, Sanitizer, Readset
+from crudset.crud import Crud, Paginator, Ref, Sanitizer, Readset, crudFromSpec
 
 from twisted.python import log
 import logging
@@ -969,6 +969,36 @@ class SanitizerTest(TestCase):
                 pass
 
         self.assertEqual(Foo.sanitizer.getSanitizedFields(), ['name'])
+
+
+
+class crudFromSpecTest(TestCase):
+
+
+    def test_defaults(self):
+        """
+        By default, all columns are readable and all are writeable
+        """
+        class Base:
+            table = families
+        crud = crudFromSpec(Base)
+        
+        # readset
+        self.assertTrue(isinstance(crud.readset, Readset))
+        self.assertEqual(crud.readset.table, families)
+        self.assertEqual(crud.readset.readable, list(families.columns),
+            "All columns should be readable by default")
+        self.assertEqual(crud.readset.references, {})
+
+        self.assertEqual(crud.table_attr, None)
+        self.assertEqual(crud.table_map, {})
+
+        # sanitizer
+        from crudset.crud import _BoundSanitizer
+        self.assertTrue(isinstance(crud.sanitizer, _BoundSanitizer))
+        self.assertEqual(crud.sanitizer.table, families)
+        self.assertEqual(crud.sanitizer.sanitizer.writeable_columns, set())
+
 
 
 
