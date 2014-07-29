@@ -577,6 +577,9 @@ def crudFromSpec(cls, table_attr=None, table_map=None):
     """
     readable = getattr(cls, 'readable', None)
     writeable = getattr(cls, 'writeable', readable)
+    if readable is None:
+        readable = writeable
+
     references = getattr(cls, 'references', None)
     sanitizer = getattr(cls, 'sanitizer', None)
 

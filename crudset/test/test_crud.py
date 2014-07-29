@@ -1195,7 +1195,9 @@ class crudFromSpecTest(TestCase):
                 'id',
             ]
         crud = crudFromSpec(Base)
-        self.assertEqual(crud.readset.readable_columns, list(families.columns))
+        self.assertEqual(crud.readset.readable_columns, [families.c.id],
+                         "You should only be able to read the writeable "
+                         "fields.")
         self.assertWriteable(crud, ['id'])
 
 
