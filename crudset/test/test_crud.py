@@ -751,7 +751,6 @@ class ReadsetTest(TestCase):
 class WritesetTest(TestCase):
 
 
-    @defer.inlineCallbacks
     def test_default(self):
         """
         By default, no fields are writeable.
@@ -760,7 +759,7 @@ class WritesetTest(TestCase):
         self.assertEqual(w.writeable, set([]))
 
         data = {'foo': 'bar', 'surname': 'Jones'}
-        output = yield w.sanitize('context', data)
+        output = self.successResultOf(w.sanitize('context', data))
         self.assertEqual(output, {}, "Should filter out all fields")
 
 
@@ -1122,6 +1121,33 @@ class SaniChainTest(TestCase):
 class crudFromSpecTest(TestCase):
 
 
+    def assertWriteable(self, crud, expected):
+        """
+        Assert that the given fields are the complete set of writeable fields.
+        """
+        dummy = {}
+        for c in crud.readset.table.columns:
+            dummy[c.name] = 'dummy'
+        d = crud.sanitizer.sanitize(
+            SanitizationContext(None, None, None),
+            dummy)
+        output = self.successResultOf(d)
+        self.assertEqual(set(output.keys()), set(expected),
+            "Expected these fields to be writeable: %r" % (expected,))
+        return output
+
+
+    def test_table_attr(self):
+        """
+        You can set the table_attr.
+        """
+        class Base:
+            table = families
+        crud = crudFromSpec(Base, table_attr='foo', table_map={'foo':'bar'})
+        self.assertEqual(crud.table_attr, 'foo')
+        self.assertEqual(crud.table_map, {'foo':'bar'})
+
+
     def test_defaults(self):
         """
         By default, all columns are readable and all are writeable
@@ -1130,20 +1156,76 @@ class crudFromSpecTest(TestCase):
             table = families
         crud = crudFromSpec(Base)
         
-        # readset
-        self.assertTrue(isinstance(crud.readset, Readset))
-        self.assertEqual(crud.readset.table, families)
-        self.assertEqual(crud.readset.readable, list(families.columns),
-            "All columns should be readable by default")
-        self.assertEqual(crud.readset.references, {})
-
         self.assertEqual(crud.table_attr, None)
         self.assertEqual(crud.table_map, {})
 
+        # readset
+        self.assertTrue(isinstance(crud.readset, Readset))
+        self.assertEqual(crud.readset.table, families)
+        self.assertEqual(crud.readset.readable_columns, list(families.columns),
+            "All columns should be readable by default")
+        self.assertEqual(crud.readset.references, {})
+
         # sanitizer
-        from crudset.crud import _BoundSanitizer
-        self.assertTrue(isinstance(crud.sanitizer, _BoundSanitizer))
         self.assertEqual(crud.sanitizer.table, families)
-        self.assertEqual(crud.sanitizer.sanitizer.writeable_columns, set())
+        self.assertWriteable(crud, [])
+
+
+    def test_readable(self):
+        """
+        You can specify the list of readable columns.
+        """
+        class Base:
+            table = families
+            readable = [
+                'id',
+            ]
+        crud = crudFromSpec(Base)
+        self.assertEqual(crud.readset.readable, set(['id']))
+        self.assertWriteable(crud, ['id'])
+
+
+    def test_writeable(self):
+        """
+        You can specify the list of writeable columns.
+        """
+        class Base:
+            table = families
+            writeable = [
+                'id',
+            ]
+        crud = crudFromSpec(Base)
+        self.assertEqual(crud.readset.readable_columns, list(families.columns))
+        self.assertWriteable(crud, ['id'])
+
+
+    def test_references(self):
+        """
+        You can specify a hash of references.
+        """
+        ref = Ref(Readset(people), families.c.id == people.c.family_id)
+        class Base:
+            table = families
+            references = {
+                'foo': ref,
+            }
+        crud = crudFromSpec(Base)
+        self.assertEqual(crud.readset.references['foo'], ref)
+
+
+    def test_sanitizer(self):
+        """
+        You can specify a sanitizer
+        """
+        class Base:
+            table = families
+            writeable = ['surname']
+            sanitizer = Sanitizer(table)
+            @sanitizer.sanitizeField('surname')
+            def surname(self, context, data, fieldname):
+                return 'sanitized surname'
+        crud = crudFromSpec(Base)
+        output = self.assertWriteable(crud, ['surname'])
+        self.assertEqual(output['surname'], 'sanitized surname')
 
 

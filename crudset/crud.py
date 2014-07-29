@@ -113,7 +113,7 @@ class Writeset(object):
         union = set(data) & self.writeable
         for key in union:
             ret[key] = data[key]
-        return ret
+        return defer.succeed(ret)
 
 
 
@@ -480,7 +480,6 @@ class Crud(object):
     def _getOne(self, engine, pk):
         # base query
         query = self.base_query
-        
         # pk
         table = self.readset.table
         where = [x == y for (x,y) in zip(table.primary_key.columns, pk)]
@@ -568,5 +567,27 @@ class Paginator(object):
 
         pages = ((count - 1) / self.page_size) + 1
         defer.returnValue(pages)
+
+
+
+
+def crudFromSpec(cls, table_attr=None, table_map=None):
+    """
+    Create a Crud from a specification class.  See README.md for an example.
+    """
+    readable = getattr(cls, 'readable', None)
+    writeable = getattr(cls, 'writeable', readable)
+    references = getattr(cls, 'references', None)
+    sanitizer = getattr(cls, 'sanitizer', None)
+
+    sanitizers = Writeset(cls.table, writeable)
+    if sanitizer:
+        sanitizers = [sanitizer, sanitizers]
+    return Crud(
+        Readset(cls.table, readable, references),
+        sanitizers,
+        table_attr=table_attr,
+        table_map=table_map)
+
 
 
