@@ -159,8 +159,10 @@ class MultiPolicySanitizer(object):
         """
         Sanitize one set of data according to a policy.
         """
-        tokeep = policy['writeable'] & set(source_data)
-        return {k:source_data[k] for k in tokeep}
+        ret = {}
+        for k in policy['writeable'] & set(source_data):
+            ret[k] = source_data[k]
+        return ret
 
 
 
