@@ -2,7 +2,7 @@ from twisted.internet import defer
 
 from sqlalchemy.sql import select, and_
 
-from crudset.error import TooMany, MissingRequiredFields
+from crudset.error import TooMany, MissingRequiredFields, Error
 
 
 
@@ -114,6 +114,53 @@ class Writeset(object):
         for key in union:
             ret[key] = data[key]
         return defer.succeed(ret)
+
+
+
+class MultiPolicySanitizer(object):
+    """
+    I combine a set of data from different sources into a single set of data
+    according to writeability rules.
+    """
+
+    def __init__(self, table, policies):
+        self.table = table
+        self.policies = {}
+        for name, policy in policies.items():
+            self.policies[name] = {
+                'writeable': set(),
+            }
+            for k, v in policy.items():
+                v = set(v)
+                unknown = v - set([x.name for x in self.table.c])
+                if unknown:
+                    raise ValueError('Unknown fields %r for table %r' % (
+                        list(unknown), self.table))
+                self.policies[name][k] = v
+
+
+    def sanitize(self, context, data):
+        """
+        Combine source-specific data into a single set of data.
+        """
+        ret = {}
+        for source_key, source_data in data.items():
+            policy_name = source_key.rsplit('_', 1)[0]
+            policy = self.policies[policy_name]
+            sanitized = self._sanitizePolicy(policy, source_data)
+            for key in set(sanitized) & set(ret):
+                if ret[key] != sanitized[key]:
+                    raise Error('Value mismatch for %r' % (key,))
+            ret.update(sanitized)
+        return ret
+
+
+    def _sanitizePolicy(self, policy, source_data):
+        """
+        Sanitize one set of data according to a policy.
+        """
+        tokeep = policy['writeable'] & set(source_data)
+        return {k:source_data[k] for k in tokeep}
 
 
 

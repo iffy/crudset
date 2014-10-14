@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 from crudset.error import TooMany, MissingRequiredFields
 from crudset.crud import Crud, Paginator, Ref, Sanitizer, Readset, Writeset
 from crudset.crud import SanitizationContext, SaniChain, crudFromSpec
+from crudset.crud import MultiPolicySanitizer
 
 from twisted.python import log
 import logging
@@ -1240,4 +1241,137 @@ class crudFromSpecTest(TestCase):
         output = self.assertWriteable(crud, ['surname'])
         self.assertEqual(output['surname'], 'sanitized surname')
 
+
+
+class MultiPolicySanitizerTest(TestCase):
+
+
+    def test_unknownFields(self):
+        """
+        Fields not on a table should cause an exception.
+        """
+        self.assertRaises(ValueError, MultiPolicySanitizer, families, {
+            'public': {
+                'writeable': ['some_bogus_field'],
+            },
+        })
+
+
+    def test_ignoreNonWriteable(self):
+        """
+        Non-writeable fields are ignored.
+        """
+        mps = MultiPolicySanitizer(families, {
+            'public': {
+                'writeable': ['surname'],
+            },
+        })
+        input_data = {
+            'public_data': {
+                'id': 10,
+                'surname': 'Ford',
+                'location': 'Bob',
+            }
+        }
+        expected = {
+            'surname': 'Ford',
+        }
+        self.assertEqual(mps.sanitize(None, input_data), expected,
+            "Should ignore all fields except the surname because it's the only"
+            " writeable field")
+
+
+    def test_combineData(self):
+        """
+        Different pieces of data should be combined.
+        """
+        mps = MultiPolicySanitizer(families, {
+            'public': {
+                'writeable': ['surname'],
+            },
+            'system': {
+                'writeable': ['location'],
+            }
+        })
+        input_data = {
+            'public_data': {
+                'id': 10,
+                'surname': 'Ford',
+                'location': 'Bob',
+            },
+            'system_data': {
+                'id': 12,
+                'surname': 'Hey',
+                'location': 'Mordor',
+            }
+        }
+        expected = {
+            'surname': 'Ford',
+            'location': 'Mordor',
+        }
+        self.assertEqual(mps.sanitize(None, input_data), expected,
+            "Should combine fields from both policies.")
+
+
+    def test_failOnConflicts(self):
+        """
+        If two policies with overlapping writeable fields attempt to update the
+        same key to different values, fail.
+        """
+        mps = MultiPolicySanitizer(families, {
+            'public': {
+                'writeable': ['surname'],
+            },
+            'system': {
+                'writeable': ['surname'],
+            }
+        })
+        input_data = {
+            'public_data': {
+                'surname': 'Ford',
+            },
+            'system_data': {
+                'surname': 'Hey',
+            }
+        }
+        self.assertRaises(Exception, mps.sanitize, None, input_data)
+
+
+    def test_dontFailIfNoConflict(self):
+        """
+        If two policies with overlapping writable fields attempt to update the
+        same key to the same value, it's okay.
+        """
+        mps = MultiPolicySanitizer(families, {
+            'public': {
+                'writeable': ['surname'],
+            },
+            'system': {
+                'writeable': ['surname'],
+            }
+        })
+        input_data = {
+            'public_data': {
+                'surname': 'Ford',
+            },
+            'system_data': {
+                'surname': 'Ford',
+            }
+        }
+        expected = {
+            'surname': 'Ford',
+        }
+        self.assertEqual(mps.sanitize(None, input_data), expected,
+            "Should combine fields from both policies.")
+
+
+    def test_badData(self):
+        """
+        All keys must have a _data suffix.
+        """
+        mps = MultiPolicySanitizer(families, {
+            'public': {},
+        })
+        self.assertRaises(Exception, mps.sanitize, None,
+            {'not_really_data': {}})
 
