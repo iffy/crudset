@@ -1,5 +1,4 @@
 from twisted.internet import defer
-
 from sqlalchemy.sql import select, and_
 
 from crudset.error import TooMany, MissingRequiredFields
@@ -8,16 +7,22 @@ from crudset.error import TooMany, MissingRequiredFields
 
 class Ref(object):
     """
-    A reference to another object (single object) for use within a L{Policy}.
+    A reference to another object or list of objects for use within a L{Readset}.
     """
 
-    def __init__(self, readset, join):
+    def __init__(self, readset, join, multiple=False):
+        """
+        @param multiple: If C{True} then this is a reference to multiple things
+            rather than just one thing (the default).
+        """
         self.readset = readset
         self.join = join
+        self.multiple = multiple
 
 
     def __repr__(self):
-        return 'Ref(%r, %r)' % (self.readset, self.join)
+        return 'Ref(%r, %r, multiple=%r)' % (
+            self.readset, self.join, self.multiple)
 
 
 
@@ -393,7 +398,8 @@ class Crud(object):
         rows = yield result.fetchall()
         ret = []
         for row in rows:
-            ret.append(self._rowToDict(row))
+            ret.append(self._rowToDict(engine, row))
+        ret = yield defer.gatherResults(ret)
         defer.returnValue(ret)
 
 
@@ -455,13 +461,17 @@ class Crud(object):
         return self._base_query
 
     def _generateBaseQueryAndColumns(self):
-        columns = [(None,x) for x in self.readset.readable_columns]
+        # grab the primary key for later
+        columns = [(None, x.label('pk-%d'%(i,))) for (i,x) in enumerate(self.readset.table.primary_key)]
+        columns = columns + [(None,x) for x in self.readset.readable_columns]
         join = None
-        if self.readset.references:
-            join = self.readset.table
-            for ref_name, ref in self.readset.references.items():
-                join = join.outerjoin(ref.readset.table, ref.join)
-                columns.extend([(ref_name, x) for x in ref.readset.readable_columns])
+        for ref_name, ref in self.readset.references.items():
+            if ref.multiple:
+                continue
+            if join is None:
+                join = self.readset.table
+            join = join.outerjoin(ref.readset.table, ref.join)
+            columns.extend([(ref_name, x) for x in ref.readset.readable_columns])
         
         base = select([x[1] for x in columns], use_labels=True)
         if join is not None:
@@ -495,7 +505,7 @@ class Crud(object):
         
         result = yield engine.execute(query)
         row = yield result.fetchone()
-        data = self._rowToDict(row)
+        data = yield self._rowToDict(engine, row)
         defer.returnValue(data)
 
 
@@ -503,36 +513,68 @@ class Crud(object):
         return self.table_map.get(table, table.name)
 
 
-    def _rowToDict(self, row):
-        d = {}
+    @defer.inlineCallbacks
+    def _rowToDict(self, engine, row):
+        ret = {}
+        pk_column = self.readset.table.primary_key
+        pk_value = row[:len(pk_column)]
+
+        row = row[len(pk_column):]
+        columns = self.select_columns[len(pk_column):]
+
         if self.table_attr:
-            d[self.table_attr] = self._tableName(self.readset.table)
+            ret[self.table_attr] = self._tableName(self.readset.table)
         # XXX the null-reference checking seems less than optimal (lots of
         # looping and branching.  Maybe there's a way to have the response
         # tell us clearly whether the record is null or not)
         has_value = {}
-        for ((ref_name,col), v) in zip(self.select_columns, row):
+        for ((ref_name,col), v) in zip(columns, row):
             if ref_name is None:
                 # base object attribute
-                d[col.name] = v
+                ret[col.name] = v
             else:
                 if ref_name not in has_value:
                     has_value[ref_name] = False
                 # referenced object attribute
-                if ref_name not in d:
-                    d[ref_name] = {}
+                if ref_name not in ret:
+                    ret[ref_name] = {}
                     if self.table_attr:
-                        d[ref_name][self.table_attr] = self._tableName(col.table)
-                d[ref_name][col.name] = v
+                        ret[ref_name][self.table_attr] = self._tableName(col.table)
+                ret[ref_name][col.name] = v
                 if v is not None:
                     has_value[ref_name] = True
 
         # set Nulls
         for ref_name, ref_has_value in has_value.items():
             if not ref_has_value:
-                d[ref_name] = None
+                ret[ref_name] = None
 
-        return d
+        # get multi references
+        multi_refs = []
+        for (ref_name, ref) in self.readset.references.items():
+            if not ref.multiple:
+                continue
+            join = self.readset.table.join(
+                ref.readset.table, ref.join)
+            query = select(ref.readset.readable_columns).select_from(join)
+            where = [x == y for (x,y) in zip(pk_column, pk_value)]
+            query = query.where(*where)
+            result_d = engine.execute(query).addCallback(lambda x:x.fetchall())
+            def toDict(rows, columns):
+                return_rows = []
+                for row in rows:
+                    d = {}
+                    for (k,v) in zip(columns, row):
+                        d[k.name] = v
+                    return_rows.append(d)
+                return return_rows 
+            rows = result_d.addCallback(toDict, ref.readset.readable_columns)
+            multi_refs.append(rows.addCallback(lambda r:(ref_name, r)))
+        multi_refs = yield defer.gatherResults(multi_refs)
+        for k,v in multi_refs:
+            ret[k] = v
+
+        defer.returnValue(ret)
 
 
 class Paginator(object):

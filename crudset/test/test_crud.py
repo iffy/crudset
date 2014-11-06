@@ -643,6 +643,37 @@ class CrudTest(TestCase):
 
 
     @defer.inlineCallbacks
+    def test_references_list(self):
+        """
+        You can reference a list of things.
+        """
+        engine = yield self.engine()
+        pet_crud = Crud(Readset(pets), Sanitizer(pets))
+        fam_crud = Crud(Readset(families, references={
+            'pets': Ref(Readset(pets), pets.c.family_id == families.c.id,
+                multiple=True),
+        }), Sanitizer(families))
+
+        johnson = yield fam_crud.create(engine, {'surname': 'Johnson'})
+        self.assertEqual(johnson['pets'], [])
+
+        cat = yield pet_crud.create(engine, {
+            'family_id': johnson['id'],
+            'name': 'cat'})
+
+        johnson_crud = fam_crud.fix({'id': johnson['id']})
+        johnson = yield johnson_crud.getOne(engine)
+        self.assertEqual(johnson['pets'], [cat])
+
+        dog = yield pet_crud.create(engine, {
+            'family_id': johnson['id'],
+            'name': 'dog'})
+        johnson = yield johnson_crud.getOne(engine)
+        self.assertIn(dog, johnson['pets'])
+        self.assertIn(cat, johnson['pets'])
+
+
+    @defer.inlineCallbacks
     def test_table_attr(self):
         """
         You can expose the table names as an attribute.
