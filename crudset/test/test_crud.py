@@ -1013,6 +1013,25 @@ class SanitizerTest(TestCase):
 
 
     @defer.inlineCallbacks
+    def test_sanitizeField_deferred(self):
+        """
+        Field sanitizers can return deferreds.
+        """
+        class Foo(object):
+            sanitizer = Sanitizer(pets)
+
+            @sanitizer.sanitizeField('name')
+            def name(self, context, data, field):
+                return defer.succeed('new name')
+
+        sanitizer = Foo().sanitizer
+
+        indata = {'name': 'sam'}
+        output = yield sanitizer.sanitize(self.create_context, indata)
+        self.assertEqual(output, {'name': 'new name'})
+
+
+    @defer.inlineCallbacks
     def test_sanitizeField_order(self):
         """
         Fields are sanitized in the order added.
