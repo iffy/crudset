@@ -759,7 +759,11 @@ class WritesetTest(TestCase):
         self.assertEqual(w.writeable, set([]))
 
         data = {'foo': 'bar', 'surname': 'Jones'}
-        output = self.successResultOf(w.sanitize('context', data))
+        output = self.successResultOf(w.sanitize(
+            SanitizationContext(None, 'create', None), data))
+        self.assertEqual(output, {}, "Should filter out all fields")
+        output = self.successResultOf(w.sanitize(
+            SanitizationContext(None, 'update', None), data))
         self.assertEqual(output, {}, "Should filter out all fields")
 
 
@@ -772,7 +776,11 @@ class WritesetTest(TestCase):
         self.assertEqual(w.writeable, set(['surname']))
 
         data = {'foo': 'bar', 'surname': 'Jones', 'location': 'Nowhere'}
-        output = yield w.sanitize('context', data)
+        output = yield w.sanitize(
+            SanitizationContext(None, 'update', None), data)
+        self.assertEqual(output, {'surname': 'Jones'}, "Surname is writeable")
+        output = yield w.sanitize(
+            SanitizationContext(None, 'create', None), data)
         self.assertEqual(output, {'surname': 'Jones'}, "Surname is writeable")
 
 
@@ -782,6 +790,28 @@ class WritesetTest(TestCase):
         """
         w = Writeset(families, [families.c.surname])
         self.assertEqual(w.writeable, set(['surname']))
+
+
+    @defer.inlineCallbacks
+    def test_create_writeable(self):
+        """
+        Setting a list of create_writeable fields will only let the fields
+        pass through when creating.
+        """
+        w = Writeset(families,
+            writeable=['location'],
+            create_writeable=['surname'])
+
+        data = {'foo': 'bar', 'surname': 'Jones', 'location': 'Nowhere'}
+        output = yield w.sanitize(
+            SanitizationContext(None, 'create', None), data)
+        self.assertEqual(output, {'surname': 'Jones', 'location': 'Nowhere'},
+            "Writeable and create writeable are writeable during create")
+
+        output = yield w.sanitize(
+            SanitizationContext(None, 'update', None), data)
+        self.assertEqual(output, {'location': 'Nowhere'},
+            "Only writeable is writeable during update")
 
 
 
@@ -1156,6 +1186,33 @@ class crudFromSpecTest(TestCase):
         return output
 
 
+    def assertCreateWriteable(self, crud, expected):
+        """
+        Assert that the given fields are the complete set of writeable fields
+        when creating and that none of them are writeable when updating.
+        """
+        dummy = {}
+        for c in crud.readset.table.columns:
+            dummy[c.name] = 'dummy'
+        d = crud.sanitizer.sanitize(
+            SanitizationContext(None, 'create', None),
+            dummy)
+        output = self.successResultOf(d)
+        self.assertEqual(set(output), set(expected),
+            "Expected these fields to be writeable during create: %r" % (
+            expected,))
+
+        d = crud.sanitizer.sanitize(
+            SanitizationContext(None, 'update', None),
+            dummy)
+        output = self.successResultOf(d)
+        writeable = set(output) & set(expected)
+        self.assertEqual(writeable, set(),
+            "Expected fields not to be writeable during update: %r" % (
+            writeable))
+        return output
+
+
     def test_table_attr(self):
         """
         You can set the table_attr.
@@ -1228,6 +1285,19 @@ class crudFromSpecTest(TestCase):
         crud = crudFromSpec(Base)
         self.assertEqual(crud.readset.readable_columns, list(families.columns))
         self.assertWriteable(crud, [x.name for x in families.columns])
+
+
+    def test_create_writeable(self):
+        """
+        You can specify that a set of fields are writeable only when creating.
+        """
+        class Base:
+            table = families
+            create_writeable = [
+                'surname',
+            ]
+        crud = crudFromSpec(Base)
+        self.assertCreateWriteable(crud, ['surname'])
 
 
     def test_references(self):
