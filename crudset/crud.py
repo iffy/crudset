@@ -390,7 +390,7 @@ class Crud(object):
         rows = yield result.fetchall()
         ret = []
         for row in rows:
-            ret.append(self._rowToDict(row))
+            ret.append(self._rowToDict(engine, row))
         ret = yield defer.gatherResults(ret)
         defer.returnValue(ret)
 
@@ -453,7 +453,9 @@ class Crud(object):
         return self._base_query
 
     def _generateBaseQueryAndColumns(self):
-        columns = [(None,x) for x in self.readset.readable_columns]
+        # grab the primary key for later
+        columns = [(None, x.label('pk-%d'%(i,))) for (i,x) in enumerate(self.readset.table.primary_key)]
+        columns = columns + [(None,x) for x in self.readset.readable_columns]
         join = None
         for ref_name, ref in self.readset.references.items():
             if ref.multiple:
@@ -495,7 +497,7 @@ class Crud(object):
         
         result = yield engine.execute(query)
         row = yield result.fetchone()
-        data = yield self._rowToDict(row)
+        data = yield self._rowToDict(engine, row)
         defer.returnValue(data)
 
 
@@ -504,15 +506,21 @@ class Crud(object):
 
 
     @defer.inlineCallbacks
-    def _rowToDict(self, row):
+    def _rowToDict(self, engine, row):
         ret = {}
+        pk_column = self.readset.table.primary_key
+        pk_value = row[:len(pk_column)]
+
+        row = row[len(pk_column):]
+        columns = self.select_columns[len(pk_column):]
+
         if self.table_attr:
             ret[self.table_attr] = self._tableName(self.readset.table)
         # XXX the null-reference checking seems less than optimal (lots of
         # looping and branching.  Maybe there's a way to have the response
         # tell us clearly whether the record is null or not)
         has_value = {}
-        for ((ref_name,col), v) in zip(self.select_columns, row):
+        for ((ref_name,col), v) in zip(columns, row):
             if ref_name is None:
                 # base object attribute
                 ret[col.name] = v
@@ -538,11 +546,25 @@ class Crud(object):
         for (ref_name, ref) in self.readset.references.items():
             if not ref.multiple:
                 continue
-            join = self.readset.table.outerjoin(
+            join = self.readset.table.join(
                 ref.readset.table, ref.join)
-            base = select(ref.readset.readable_columns).select_from(join)
-            base = self._applyConstraints(base)
-            yield 'foo'
+            query = select(ref.readset.readable_columns).select_from(join)
+            where = [x == y for (x,y) in zip(pk_column, pk_value)]
+            query = query.where(*where)
+            result_d = engine.execute(query).addCallback(lambda x:x.fetchall())
+            def toDict(rows, columns):
+                return_rows = []
+                for row in rows:
+                    d = {}
+                    for (k,v) in zip(columns, row):
+                        d[k.name] = v
+                    return_rows.append(d)
+                return return_rows 
+            rows = result_d.addCallback(toDict, ref.readset.readable_columns)
+            multi_refs.append(rows.addCallback(lambda r:(ref_name, r)))
+        multi_refs = yield defer.gatherResults(multi_refs)
+        for k,v in multi_refs:
+            ret[k] = v
 
         defer.returnValue(ret)
 
