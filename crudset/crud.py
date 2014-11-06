@@ -91,17 +91,23 @@ class Writeset(object):
     A description of the fields that are writeable.
     """
 
-    def __init__(self, table, writeable=None):
+    def __init__(self, table, writeable=None, create_writeable=None):
         """
 
         """
         self.table = table
         self.writeable = set()
+        self.create_writeable = set()
         for field in (writeable or []):
             if type(field) in (str, unicode):
                 self.writeable.add(field)
             else:
                 self.writeable.add(field.name)
+        for field in (create_writeable or []):
+            if type(field) in (str, unicode):
+                self.create_writeable.add(field)
+            else:
+                self.create_writeable.add(field.name)
 
 
     def __repr__(self):
@@ -111,6 +117,8 @@ class Writeset(object):
     def sanitize(self, context, data):
         ret = {}
         union = set(data) & self.writeable
+        if context.action == 'create':
+            union = union | self.create_writeable
         for key in union:
             ret[key] = data[key]
         return defer.succeed(ret)
@@ -581,13 +589,16 @@ def crudFromSpec(cls, table_attr=None, table_map=None):
     table = cls.table
     readable = getattr(cls, 'readable', None)
     writeable = getattr(cls, 'writeable', None)
+    create_writeable = getattr(cls, 'create_writeable', None)
     references = getattr(cls, 'references', None)
     sanitizer = getattr(cls, 'sanitizer', None)
 
     if writeable == 'ALL':
         writeable = [x.name for x in table.columns]
 
-    sanitizers = Writeset(cls.table, writeable)
+    sanitizers = Writeset(cls.table, writeable,
+        create_writeable=create_writeable)
+
     if sanitizer:
         sanitizers = [sanitizer, sanitizers]
     return Crud(
