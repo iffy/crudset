@@ -662,13 +662,13 @@ class CrudTest(TestCase):
             'name': 'cat'})
 
         johnson_crud = fam_crud.fix({'id': johnson['id']})
-        johnson = yield johnson_crud.getOne()
+        johnson = yield johnson_crud.getOne(engine)
         self.assertEqual(johnson['pets'], [cat])
 
         dog = yield pet_crud.create(engine, {
             'family_id': johnson['id'],
             'name': 'dog'})
-        johnson = yield johnson_crud.getOne()
+        johnson = yield johnson_crud.getOne(engine)
         self.assertIn(dog, johnson['pets'])
         self.assertIn(cat, johnson['pets'])
 
