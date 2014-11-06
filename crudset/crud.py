@@ -1,5 +1,5 @@
 from twisted.internet import defer
-
+from ordereddict import OrderedDict
 from sqlalchemy.sql import select, and_
 
 from crudset.error import TooMany, MissingRequiredFields
@@ -8,16 +8,22 @@ from crudset.error import TooMany, MissingRequiredFields
 
 class Ref(object):
     """
-    A reference to another object (single object) for use within a L{Policy}.
+    A reference to another object or list of objects for use within a L{Readset}.
     """
 
-    def __init__(self, readset, join):
+    def __init__(self, readset, join, multiple=False):
+        """
+        @param multiple: If C{True} then this is a reference to multiple things
+            rather than just one thing (the default).
+        """
         self.readset = readset
         self.join = join
+        self.multiple = multiple
 
 
     def __repr__(self):
-        return 'Ref(%r, %r)' % (self.readset, self.join)
+        return 'Ref(%r, %r, multiple=%r)' % (
+            self.readset, self.join, self.multiple)
 
 
 
@@ -486,13 +492,22 @@ class Crud(object):
         query = query.where(*where)
         
         result = yield engine.execute(query)
-        row = yield result.fetchone()
-        data = self._rowToDict(row)
+        rows = yield result.fetchall()
+        data = self._rowsToDicts(rows)[0]
         defer.returnValue(data)
 
 
     def _tableName(self, table):
         return self.table_map.get(table, table.name)
+
+
+    def _rowsToDicts(self, rows):
+        """
+        Turn a list of rows into a list of dicts, combining multi-references
+        in the process.
+        """
+        results = OrderedDict()
+        return results.values()
 
 
     def _rowToDict(self, row):
