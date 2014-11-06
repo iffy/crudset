@@ -1018,7 +1018,6 @@ class SanitizerTest(TestCase):
         """
         Field sanitizers can return deferreds.
         """
-        called = {}
         class Foo(object):
             sanitizer = Sanitizer(pets)
 
