@@ -398,8 +398,8 @@ class Crud(object):
         rows = yield result.fetchall()
         ret = []
         for row in rows:
-            ret.append(self._rowToDict(engine, row))
-        ret = yield defer.gatherResults(ret)
+            d = yield self._rowToDict(engine, row)
+            ret.append(d)
         defer.returnValue(ret)
 
 
@@ -515,6 +515,7 @@ class Crud(object):
 
     @defer.inlineCallbacks
     def _rowToDict(self, engine, row):
+        # XXX you could make this way faster
         ret = {}
         pk_column = self.readset.table.primary_key
         pk_value = row[:len(pk_column)]
@@ -550,7 +551,6 @@ class Crud(object):
                 ret[ref_name] = None
 
         # get multi references
-        # multi_refs = []
         for (ref_name, ref) in self.readset.references.items():
             if not ref.multiple:
                 continue
@@ -571,10 +571,6 @@ class Crud(object):
             if ref_name not in ret:
                 ret[ref_name] = []
             ret[ref_name] = return_rows
-        #     multi_refs.append(rows.addCallback(lambda r:(ref_name, r)))
-        # multi_refs = yield defer.gatherResults(multi_refs)
-        # for k,v in multi_refs:
-        #     ret[k] = v
 
         defer.returnValue(ret)
 
