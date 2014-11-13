@@ -550,7 +550,7 @@ class Crud(object):
                 ret[ref_name] = None
 
         # get multi references
-        multi_refs = []
+        # multi_refs = []
         for (ref_name, ref) in self.readset.references.items():
             if not ref.multiple:
                 continue
@@ -559,20 +559,22 @@ class Crud(object):
             query = select(ref.readset.readable_columns).select_from(join)
             where = [x == y for (x,y) in zip(pk_column, pk_value)]
             query = query.where(*where)
-            result_d = engine.execute(query).addCallback(lambda x:x.fetchall())
-            def toDict(rows, columns):
-                return_rows = []
-                for row in rows:
-                    d = {}
-                    for (k,v) in zip(columns, row):
-                        d[k.name] = v
-                    return_rows.append(d)
-                return return_rows 
-            rows = result_d.addCallback(toDict, ref.readset.readable_columns)
-            multi_refs.append(rows.addCallback(lambda r:(ref_name, r)))
-        multi_refs = yield defer.gatherResults(multi_refs)
-        for k,v in multi_refs:
-            ret[k] = v
+            result = yield engine.execute(query)
+            rows = yield result.fetchall()
+            
+            return_rows = []
+            for row in rows:
+                d = {}
+                for (k,v) in zip(ref.readset.readable_columns, row):
+                    d[k.name] = v
+                return_rows.append(d)
+            if ref_name not in ret:
+                ret[ref_name] = []
+            ret[ref_name] = return_rows
+        #     multi_refs.append(rows.addCallback(lambda r:(ref_name, r)))
+        # multi_refs = yield defer.gatherResults(multi_refs)
+        # for k,v in multi_refs:
+        #     ret[k] = v
 
         defer.returnValue(ret)
 
